@@ -722,6 +722,12 @@
             }
 
             let isSignUpMode = false;
+            // Set right before signIn/createUser so the onAuthStateChanged
+            // listener below (which also fires for a fresh interactive
+            // login, not just page refresh) knows to stay out of the way -
+            // handleAuth() already does its own mounting below, in the
+            // correct order (register-then-read-role for sign-ups).
+            let skipNextAuthRestore = false;
             function toggleAuthMode() {
                 isSignUpMode = !isSignUpMode;
                 document.getElementById("name-group").style.display =
@@ -742,6 +748,7 @@
 
             async function handleAuth(e) {
                 if (e) e.preventDefault();
+                skipNextAuthRestore = true;
                 const email = document.getElementById("email-input").value;
                 const password =
                     document.getElementById("password-input").value;
@@ -778,35 +785,8 @@
                         });
                     }
 
-                    const authResponse = await fetch(
-                        "/api/auth/me?t=" + Date.now(),
-                        { headers: getAuthHeaders(), cache: "no-store" },
-                    );
-                    if (!authResponse.ok)
-                        throw new Error("Failed to verify user profile.");
-                    const userData = await authResponse.json();
-
-                    document.getElementById("display-name").innerText =
-                        userData.name;
-                    document.getElementById("display-role").innerText =
-                        userData.role;
-                    document.getElementById("sso-screen").style.display =
-                        "none";
-                    document.getElementById("main-app").style.display = "block";
+                    await mountDashboard();
                     errorText.style.display = "none";
-
-                    if (userData.role === "IT-Director") {
-                        document.getElementById("admin-panel").style.display =
-                            "block";
-                        loadAdminInbox();
-                        loadAdminUsers();
-                    } else {
-                        document.getElementById("admin-panel").style.display =
-                            "none";
-                    }
-
-                    runAudit();
-                    startRealtimeSync();
                 } catch (error) {
                     errorText.innerText = error.message;
                     errorText.style.display = "block";
@@ -1230,9 +1210,73 @@
                 history.scrollTop = history.scrollHeight;
             }
 
-            window.onload = () => {
-                if (sessionStorage.getItem("aegis_token")) handleLogout();
-            };
+            // Shared by both a fresh interactive login (handleAuth) and a
+            // restored session on page refresh (onAuthStateChanged below),
+            // so the two paths can never drift out of sync with each other.
+            async function mountDashboard() {
+                const authResponse = await fetch(
+                    "/api/auth/me?t=" + Date.now(),
+                    { headers: getAuthHeaders(), cache: "no-store" },
+                );
+                if (!authResponse.ok)
+                    throw new Error("Failed to verify user profile.");
+                const userData = await authResponse.json();
+
+                document.getElementById("display-name").innerText =
+                    userData.name;
+                document.getElementById("display-role").innerText =
+                    userData.role;
+                document.getElementById("sso-screen").style.display = "none";
+                document.getElementById("main-app").style.display = "block";
+
+                if (userData.role === "IT-Director") {
+                    document.getElementById("admin-panel").style.display =
+                        "block";
+                    loadAdminInbox();
+                    loadAdminUsers();
+                } else {
+                    document.getElementById("admin-panel").style.display =
+                        "none";
+                }
+
+                runAudit();
+                startRealtimeSync();
+            }
+
+            // --- SESSION PERSISTENCE ACROSS REFRESH ---
+            // Firebase Auth persists the signed-in user across page reloads
+            // on its own (IndexedDB, separate from sessionStorage). This
+            // fires once on every page load with whatever session Firebase
+            // already has - null if nobody's logged in, or the existing
+            // user if a refresh just happened. Previously this project just
+            // called handleLogout() whenever a leftover token was found,
+            // which unconditionally signed the person out on every refresh.
+            // Instead: pull a fresh ID token (auto-renewed if the old one
+            // expired) and re-mount the dashboard, only tearing things down
+            // if that genuinely fails.
+            firebase.auth().onAuthStateChanged(async (user) => {
+                if (skipNextAuthRestore) {
+                    skipNextAuthRestore = false;
+                    return;
+                }
+
+                if (!user) {
+                    sessionStorage.removeItem("aegis_token");
+                    return;
+                }
+
+                try {
+                    const idToken = await user.getIdToken();
+                    sessionStorage.setItem("aegis_token", idToken);
+                    await mountDashboard();
+                } catch (error) {
+                    console.error(
+                        "Failed to restore session on refresh:",
+                        error.message,
+                    );
+                    handleLogout();
+                }
+            });
 
             // Fallback Synchronization Loop.
             // The SSE stream above (startRealtimeSync) is now the primary,
