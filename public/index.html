@@ -727,7 +727,7 @@
             function getAuthHeaders() {
                 return {
                     "Content-Type": "application/json",
-                    Authorization: `Bearer ${localStorage.getItem("aegis_token")}`,
+                    Authorization: `Bearer ${sessionStorage.getItem("aegis_token")}`,
                 };
             }
 
@@ -780,7 +780,7 @@
                     }
 
                     const idToken = await userCredential.user.getIdToken();
-                    localStorage.setItem("aegis_token", idToken);
+                    sessionStorage.setItem("aegis_token", idToken);
 
                     if (isSignUpMode) {
                         const name =
@@ -838,7 +838,7 @@
                     .auth()
                     .signOut()
                     .then(() => {
-                        localStorage.removeItem("aegis_token");
+                        sessionStorage.removeItem("aegis_token");
                         document.getElementById("main-app").style.display =
                             "none";
                         document.getElementById("sso-screen").style.display =
@@ -1247,7 +1247,7 @@
             }
 
             window.onload = () => {
-                if (localStorage.getItem("aegis_token")) handleLogout();
+                if (sessionStorage.getItem("aegis_token")) handleLogout();
             };
 
             // Fallback Synchronization Loop.
