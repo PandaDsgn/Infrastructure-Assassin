@@ -880,7 +880,7 @@
                                     <button onclick="executeSecurityAction('QUARANTINE', '${item.resource_name}')">Quarantine</button>
                                 </div>
                                 <div class="schedule-bar">
-                                    <button class="btn-terminate" onclick="handleDelayedTermination(this, 'TERMINATE', '${item.resource_name}')">Terminate</button>
+                                    <button class="btn-terminate" onclick="executeSecurityAction('TERMINATE', '${item.resource_name}')">Terminate</button>
                                 </div>
                             </div>
                         </div>`;
@@ -908,22 +908,31 @@
                         method: "POST",
                         headers: getAuthHeaders(),
                         body: JSON.stringify({
-                            actionType,
+                            actionType: actionType, // This now correctly sends 'TERMINATE', 'QUARANTINE', etc.
                             resource_name: resourceName,
                         }),
                     });
                     const data = await response.json();
-                    if (data.pending)
-                        alert(`🛡️ CLEARANCE DENIED: ${data.message}`);
-                    else alert(`✅ SUCCESS: ${data.message}`);
 
+                    // This handles the server's response regarding whether it was 'pending' or 'committed'
+                    if (data.pending) {
+                        alert(`🛡️ APPROVAL REQUIRED: ${data.message}`);
+                    } else {
+                        alert(`✅ SUCCESS: ${data.message}`);
+                    }
+
+                    // Refresh dashboard to show new status
+                    runAudit();
+
+                    // Refresh admin inbox if user is IT-Director
                     if (
                         document.getElementById("display-role").innerText ===
                         "IT-Director"
-                    )
+                    ) {
                         loadAdminInbox();
+                    }
                 } catch (error) {
-                    alert("Action failed.");
+                    alert("Action failed: " + error.message);
                 }
             }
 
