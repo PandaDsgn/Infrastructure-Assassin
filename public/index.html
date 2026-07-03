@@ -609,69 +609,53 @@
             let currentUserHash = "";
 
             // --- REAL-TIME SYNC (SERVER-SENT EVENTS) ---
-            // Native EventSource can't send an Authorization header, and this
-            // app authenticates with Bearer tokens (not cookies), so we open
-            // the stream with fetch() instead and parse the SSE frames by hand.
-            let sseAbortController = null;
+            // Uses native EventSource rather than a hand-rolled fetch() +
+            // ReadableStream reader. Some browsers (notably Safari) buffer
+            // the entire body of a streaming fetch() response before handing
+            // any of it to the reader - since an SSE stream never closes,
+            // that means no data is ever delivered. EventSource is the
+            // browser's purpose-built mechanism for this and streams
+            // incrementally everywhere, plus it reconnects automatically.
+            // Trade-off: EventSource can't set an Authorization header, so
+            // the token travels as a query param for this endpoint only
+            // (see the authenticateUser fallback on the server). Firebase ID
+            // tokens are short-lived, but be aware this can land in server
+            // access logs - avoid this pattern for longer-lived secrets.
+            let eventSource = null;
 
-            async function startRealtimeSync() {
-                if (sseAbortController) sseAbortController.abort();
-                sseAbortController = new AbortController();
-                const { signal } = sseAbortController;
+            function startRealtimeSync() {
+                if (eventSource) eventSource.close();
 
-                while (!signal.aborted) {
+                const token = sessionStorage.getItem("aegis_token");
+                if (!token) return;
+
+                eventSource = new EventSource(
+                    "/api/events?token=" + encodeURIComponent(token),
+                );
+
+                eventSource.onmessage = (e) => {
                     try {
-                        const response = await fetch("/api/events", {
-                            headers: getAuthHeaders(),
-                            signal,
-                        });
-                        if (!response.ok || !response.body) {
-                            throw new Error(
-                                "Real-time stream unavailable (" +
-                                    response.status +
-                                    ")",
-                            );
-                        }
-
-                        const reader = response.body.getReader();
-                        const decoder = new TextDecoder();
-                        let buffer = "";
-
-                        while (true) {
-                            const { value, done } = await reader.read();
-                            if (done) break;
-                            buffer += decoder.decode(value, { stream: true });
-
-                            let sepIndex;
-                            while ((sepIndex = buffer.indexOf("\n\n")) !== -1) {
-                                const rawEvent = buffer.slice(0, sepIndex);
-                                buffer = buffer.slice(sepIndex + 2);
-
-                                const dataLine = rawEvent
-                                    .split("\n")
-                                    .find((line) => line.startsWith("data:"));
-                                if (!dataLine) continue; // heartbeats/comments
-
-                                try {
-                                    const payload = JSON.parse(
-                                        dataLine.slice(5).trim(),
-                                    );
-                                    handleRealtimeEvent(payload);
-                                } catch (parseErr) {
-                                    // Ignore malformed frame
-                                }
-                            }
-                        }
-                    } catch (error) {
-                        if (signal.aborted) return; // Logged out intentionally
-                        console.warn(
-                            "Real-time stream dropped, reconnecting in 3s...",
-                            error,
-                        );
-                        await new Promise((resolve) =>
-                            setTimeout(resolve, 3000),
-                        );
+                        const payload = JSON.parse(e.data);
+                        handleRealtimeEvent(payload);
+                    } catch (parseErr) {
+                        // Ignore malformed frame
                     }
+                };
+
+                eventSource.onerror = () => {
+                    // EventSource retries on its own; this just surfaces it
+                    // for debugging. If the token has expired, reconnects
+                    // will keep failing until the person logs in again.
+                    console.warn(
+                        "Real-time stream interrupted - browser will auto-reconnect.",
+                    );
+                };
+            }
+
+            function stopRealtimeSync() {
+                if (eventSource) {
+                    eventSource.close();
+                    eventSource = null;
                 }
             }
 
@@ -833,7 +817,7 @@
             }
 
             function handleLogout() {
-                if (sseAbortController) sseAbortController.abort();
+                stopRealtimeSync();
                 firebase
                     .auth()
                     .signOut()

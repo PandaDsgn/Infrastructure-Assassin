@@ -31,11 +31,20 @@ app.get("/api/config", (req, res) => {
 // --- SECURE FIREBASE MIDDLEWARE ---
 async function authenticateUser(req, res, next) {
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "No authorization token provided." });
+  let token = null;
+
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    token = authHeader.split(" ")[1];
+  } else if (req.query && req.query.token) {
+    // Fallback for connections that can't set custom headers - specifically
+    // native EventSource (used for /api/events), which has no way to send
+    // an Authorization header. Every other route keeps using the header.
+    token = req.query.token;
   }
 
-  const token = authHeader.split(" ")[1];
+  if (!token) {
+    return res.status(401).json({ error: "No authorization token provided." });
+  }
 
   try {
     const decodedToken = await auth.verifyIdToken(token);
