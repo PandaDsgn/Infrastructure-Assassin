@@ -4,7 +4,7 @@ const cors = require("cors");
 const crypto = require("crypto");
 const { db, auth } = require("./firebase");
 const pgDb = require("./db");
-const { evaluateResource } = require("./agent");
+const { evaluateResource, evaluateResourcesBatch } = require("./agent");
 // @google/generative-ai reached end-of-life on Nov 30, 2025 - use the
 // current unified SDK instead.
 const { GoogleGenAI } = require("@google/genai");
@@ -197,11 +197,12 @@ app.get("/api/audit", authenticateUser, async (req, res) => {
       "SELECT * FROM resources WHERE status = 'Active' OR status = 'Pending Approval'",
     );
 
-    const auditedResources = [];
-    for (let i = 0; i < rows.length; i++) {
-      const action = await evaluateResource(rows[i]);
-      auditedResources.push({ ...rows[i], recommended_action: action });
-    }
+    // ONE Gemini call for the whole batch, not one per row - see agent.js.
+    const actions = await evaluateResourcesBatch(rows);
+    const auditedResources = rows.map((row, i) => ({
+      ...row,
+      recommended_action: actions[i],
+    }));
 
     cachedAuditResults = auditedResources;
     lastAuditTime = Date.now();
