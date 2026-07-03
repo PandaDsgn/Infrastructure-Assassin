@@ -603,6 +603,7 @@
 
         <script>
             let activeTimers = {}; // Tracking context instances globally
+            window.adminPollInterval = null; // Global reference for admin polling
 
             function toggleTheme() {
                 const html = document.documentElement;
@@ -622,6 +623,13 @@
                     "Content-Type": "application/json",
                     Authorization: `Bearer ${localStorage.getItem("aegis_token")}`,
                 };
+            }
+
+            // Short timer format converter for robust UI display
+            function getShortTimeFormat(seconds) {
+                if (seconds >= 3600) return Math.ceil(seconds / 3600) + "h";
+                if (seconds >= 60) return Math.ceil(seconds / 60) + "m";
+                return seconds + "s";
             }
 
             let isSignUpMode = false;
@@ -702,9 +710,22 @@
                             "block";
                         loadAdminInbox();
                         loadAdminUsers();
+
+                        // Start polling for new requests every 5 seconds
+                        if (!window.adminPollInterval) {
+                            window.adminPollInterval = setInterval(
+                                loadAdminInbox,
+                                5000,
+                            );
+                        }
                     } else {
                         document.getElementById("admin-panel").style.display =
                             "none";
+                        // Ensure polling is stopped if user is not an admin
+                        if (window.adminPollInterval) {
+                            clearInterval(window.adminPollInterval);
+                            window.adminPollInterval = null;
+                        }
                     }
 
                     runAudit();
@@ -718,6 +739,12 @@
             }
 
             function handleLogout() {
+                // Clear any running background polling tasks
+                if (window.adminPollInterval) {
+                    clearInterval(window.adminPollInterval);
+                    window.adminPollInterval = null;
+                }
+
                 firebase
                     .auth()
                     .signOut()
@@ -742,14 +769,14 @@
 
                 const container = document.getElementById(elementId);
                 const originalHtml = container.innerHTML;
-                let timeLeft = 10;
+                let timeLeft = 86400; // Complete 24 Hour timer logic implemented
 
                 container.innerHTML = `
-                    <button class="btn-undo-active" id="undo-${elementId}">⏳ Undo (${timeLeft}s)</button>
+                    <button class="btn-undo-active" id="undo-${elementId}">⏳ Undo (${getShortTimeFormat(timeLeft)})</button>
                     <button class="btn-now-active" id="now-${elementId}">${actionType} Now</button>
                 `;
 
-                // Handle developers clearing their entry from the admin dashboard[cite: 9]
+                // Handle developers clearing their entry from the admin dashboard
                 const role = document.getElementById("display-role").innerText;
                 if (
                     role === "Junior-Developer" &&
@@ -763,7 +790,8 @@
                     const undoBtn = document.getElementById(
                         `undo-${elementId}`,
                     );
-                    if (undoBtn) undoBtn.innerText = `⏳ Undo (${timeLeft}s)`;
+                    if (undoBtn)
+                        undoBtn.innerText = `⏳ Undo (${getShortTimeFormat(timeLeft)})`;
 
                     if (timeLeft <= 0) {
                         clearInterval(countdown);
@@ -850,13 +878,22 @@
 
                     data.forEach((item) => {
                         const cost = Number(item.monthly_cost) || 0;
-                        if (item.status === "Active") totalCost += cost;
+
+                        // Modified to properly track costs of Active AND Pending items
+                        if (
+                            item.status === "Active" ||
+                            item.status === "Pending Approval"
+                        ) {
+                            totalCost += cost;
+                        }
 
                         const secureAction = String(item.recommended_action)
                             .toUpperCase()
                             .trim();
+                        // Accurately project savings regardless of intermediate workflow statuses
                         if (
-                            item.status === "Active" &&
+                            (item.status === "Active" ||
+                                item.status === "Pending Approval") &&
                             (secureAction.includes("TERMINATE") ||
                                 secureAction.includes("QUARANTINE"))
                         ) {
