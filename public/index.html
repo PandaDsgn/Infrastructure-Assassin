@@ -417,10 +417,9 @@
         <script>
             async function initializeFirebaseApp() {
                 try {
-                    const response = await fetch("/api/config");
+                    const response = await fetch("/api/config?t=" + Date.now());
                     const firebaseConfig = await response.json();
                     firebase.initializeApp(firebaseConfig);
-                    console.log("Firebase initialized securely from .env!");
                 } catch (error) {
                     console.error(
                         "Failed to load Firebase config from server.",
@@ -604,6 +603,11 @@
         <script>
             let activeTimers = {}; // Tracking context instances globally
 
+            // Hash tracking for smart DOM diffing
+            let currentAuditHash = "";
+            let currentInboxHash = "";
+            let currentUserHash = "";
+
             function toggleTheme() {
                 const html = document.documentElement;
                 if (html.getAttribute("data-theme") === "dark") {
@@ -624,7 +628,6 @@
                 };
             }
 
-            // Short timer format converter for robust UI display
             function getShortTimeFormat(seconds) {
                 if (seconds >= 3600) return Math.ceil(seconds / 3600) + "h";
                 if (seconds >= 60) return Math.ceil(seconds / 60) + "m";
@@ -688,9 +691,10 @@
                         });
                     }
 
-                    const authResponse = await fetch("/api/auth/me", {
-                        headers: getAuthHeaders(),
-                    });
+                    const authResponse = await fetch(
+                        "/api/auth/me?t=" + Date.now(),
+                        { headers: getAuthHeaders(), cache: "no-store" },
+                    );
                     if (!authResponse.ok)
                         throw new Error("Failed to verify user profile.");
                     const userData = await authResponse.json();
@@ -735,6 +739,9 @@
                         document.getElementById("sso-screen").style.display =
                             "flex";
                         document.getElementById("results").innerHTML = "";
+                        currentAuditHash = "";
+                        currentInboxHash = "";
+                        currentUserHash = "";
                     });
             }
 
@@ -756,7 +763,7 @@
                     <button class="btn-now-active" id="now-${elementId}">${actionType} Now</button>
                 `;
 
-                // Handle developers clearing their entry from the admin dashboard
+                // Handle developers clearing their entry from the admin dashboard immediately
                 const role = document.getElementById("display-role").innerText;
                 if (
                     role === "Junior-Developer" &&
@@ -842,12 +849,25 @@
 
             // --- DASHBOARD LOGIC ---
             async function runAudit() {
+                // Pause live DOM updates if the user is currently deciding on an action so buttons don't vanish
+                if (Object.keys(activeTimers).length > 0) return;
+
                 document.getElementById("loadingText").style.display = "flex";
                 try {
-                    const response = await fetch("/api/audit", {
+                    // Added cache-busting timestamp query to force browser to pull new data
+                    const response = await fetch("/api/audit?t=" + Date.now(), {
                         headers: getAuthHeaders(),
+                        cache: "no-store",
                     });
                     const data = await response.json();
+
+                    const dataHash = JSON.stringify(data);
+                    if (dataHash === currentAuditHash) {
+                        document.getElementById("loadingText").style.display =
+                            "none";
+                        return; // Exit early if data hasn't changed
+                    }
+                    currentAuditHash = dataHash;
                     document.getElementById("loadingText").style.display =
                         "none";
 
@@ -859,7 +879,6 @@
                     data.forEach((item) => {
                         const cost = Number(item.monthly_cost) || 0;
 
-                        // Modified to properly track costs of Active AND Pending items
                         if (
                             item.status === "Active" ||
                             item.status === "Pending Approval"
@@ -870,7 +889,6 @@
                         const secureAction = String(item.recommended_action)
                             .toUpperCase()
                             .trim();
-                        // Accurately project savings regardless of intermediate workflow statuses
                         if (
                             (item.status === "Active" ||
                                 item.status === "Pending Approval") &&
@@ -955,12 +973,15 @@
                         if (data.pending)
                             alert(`🛡️ DISPATCHED: ${data.message}`);
                         else alert(`✅ SUCCESS: ${data.message}`);
+                        currentAuditHash = ""; // Force rebuild
                         runAudit();
                         if (
                             document.getElementById("display-role")
                                 .innerText === "IT-Director"
-                        )
+                        ) {
+                            currentInboxHash = "";
                             loadAdminInbox();
+                        }
                     }
                 } catch (error) {
                     if (!silentPreFlight) alert("Action failed.");
@@ -970,10 +991,16 @@
             // --- ADMIN INBOX ---
             async function loadAdminInbox() {
                 try {
-                    const response = await fetch("/api/approvals", {
-                        headers: getAuthHeaders(),
-                    });
+                    const response = await fetch(
+                        "/api/approvals?t=" + Date.now(),
+                        { headers: getAuthHeaders(), cache: "no-store" },
+                    );
                     const requests = await response.json();
+
+                    const reqHash = JSON.stringify(requests);
+                    if (reqHash === currentInboxHash) return;
+                    currentInboxHash = reqHash;
+
                     const list = document.getElementById("inbox-list");
                     list.innerHTML = "";
 
@@ -1005,6 +1032,9 @@
                     });
                     const data = await response.json();
                     alert(data.message);
+
+                    currentInboxHash = "";
+                    currentAuditHash = "";
                     loadAdminInbox();
                     runAudit();
                 } catch (error) {
@@ -1015,10 +1045,16 @@
             // --- ADMIN USER MANAGEMENT LOGIC ---
             async function loadAdminUsers() {
                 try {
-                    const response = await fetch("/api/users", {
+                    const response = await fetch("/api/users?t=" + Date.now(), {
                         headers: getAuthHeaders(),
+                        cache: "no-store",
                     });
                     const users = await response.json();
+
+                    const uHash = JSON.stringify(users);
+                    if (uHash === currentUserHash) return;
+                    currentUserHash = uHash;
+
                     const list = document.getElementById("user-list-panel");
                     list.innerHTML = "";
 
@@ -1028,13 +1064,20 @@
 
                     users.forEach((u) => {
                         const userDivId = "user-row-" + u.uid;
+
+                        // The Shield: Check user role. If IT-Director, show label. If not, show Terminate button.
+                        const actionBtnHTML =
+                            u.role === "IT-Director"
+                                ? `<span style="font-size: 0.85rem; color: var(--primary); font-weight: bold; padding: 8px;">ADMIN</span>`
+                                : `<button class="btn-reject" onclick="initiateLifecycle('${userDivId}', 'TERMINATE', '${u.uid}', 'user')">Terminate</button>`;
+
                         list.innerHTML += `
                             <div class="inbox-card" id="${userDivId}">
                                 <div>
                                     <strong>${u.name}</strong><br>
                                     <span style="font-size: 0.8rem; color: var(--text-muted);">${u.email} (${u.role})</span>
                                 </div>
-                                <button class="btn-reject" onclick="initiateLifecycle('${userDivId}', 'TERMINATE', '${u.uid}', 'user')">Terminate</button>
+                                ${actionBtnHTML}
                             </div>`;
                     });
                 } catch (error) {
@@ -1052,9 +1095,11 @@
 
                     if (response.ok) {
                         alert("User removed successfully.");
+                        currentUserHash = "";
                         loadAdminUsers();
                     } else {
                         alert(`Operation Fault: ${data.error}`);
+                        currentUserHash = "";
                         loadAdminUsers();
                     }
                 } catch (error) {
@@ -1098,12 +1143,17 @@
                 if (localStorage.getItem("aegis_token")) handleLogout();
             };
 
-            // Global Real-Time Observer Loop for IT-Directors
+            // Global Real-Time Synchronization Loop
             setInterval(() => {
-                const adminPanel = document.getElementById("admin-panel");
-                // Silently poll the inbox every 3 seconds only if the admin panel is actively visible
-                if (adminPanel && adminPanel.style.display === "block") {
-                    loadAdminInbox();
+                const mainApp = document.getElementById("main-app");
+                if (mainApp && mainApp.style.display === "block") {
+                    runAudit();
+
+                    const roleEl = document.getElementById("display-role");
+                    if (roleEl && roleEl.innerText === "IT-Director") {
+                        loadAdminInbox();
+                        loadAdminUsers();
+                    }
                 }
             }, 3000);
         </script>
