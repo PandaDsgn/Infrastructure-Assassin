@@ -603,7 +603,6 @@
 
         <script>
             let activeTimers = {}; // Tracking context instances globally
-            window.adminPollInterval = null; // Global reference for admin polling
 
             function toggleTheme() {
                 const html = document.documentElement;
@@ -710,22 +709,9 @@
                             "block";
                         loadAdminInbox();
                         loadAdminUsers();
-
-                        // Start polling for new requests every 5 seconds
-                        if (!window.adminPollInterval) {
-                            window.adminPollInterval = setInterval(
-                                loadAdminInbox,
-                                5000,
-                            );
-                        }
                     } else {
                         document.getElementById("admin-panel").style.display =
                             "none";
-                        // Ensure polling is stopped if user is not an admin
-                        if (window.adminPollInterval) {
-                            clearInterval(window.adminPollInterval);
-                            window.adminPollInterval = null;
-                        }
                     }
 
                     runAudit();
@@ -739,12 +725,6 @@
             }
 
             function handleLogout() {
-                // Clear any running background polling tasks
-                if (window.adminPollInterval) {
-                    clearInterval(window.adminPollInterval);
-                    window.adminPollInterval = null;
-                }
-
                 firebase
                     .auth()
                     .signOut()
@@ -1117,6 +1097,15 @@
             window.onload = () => {
                 if (localStorage.getItem("aegis_token")) handleLogout();
             };
+
+            // Global Real-Time Observer Loop for IT-Directors
+            setInterval(() => {
+                const adminPanel = document.getElementById("admin-panel");
+                // Silently poll the inbox every 3 seconds only if the admin panel is actively visible
+                if (adminPanel && adminPanel.style.display === "block") {
+                    loadAdminInbox();
+                }
+            }, 3000);
         </script>
     </body>
 </html>

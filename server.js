@@ -265,6 +265,7 @@ app.delete(
       const userRef = db.collection("users").doc(targetUid);
       const doc = await userRef.get();
 
+      // If the target is an IT Director, block the action completely
       if (doc.exists && doc.data().role === "IT-Director") {
         return res
           .status(403)
