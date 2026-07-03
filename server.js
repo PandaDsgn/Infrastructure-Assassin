@@ -2,8 +2,8 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const crypto = require("crypto");
-const { db, auth } = require("./firebase"); // Keeps Firebase for SSO/Users
-const pgDb = require("./db"); // Imports our brand new PostgreSQL pool
+const { db, auth } = require("./firebase");
+const pgDb = require("./db");
 const { evaluateResource } = require("./agent");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
@@ -15,8 +15,6 @@ app.use(express.json());
 // Initialize Gemini for the Conversational Chat Core
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const chatModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-
-const pendingApprovals = [];
 
 // --- PUBLIC CONFIG ENDPOINT ---
 app.get("/api/config", (req, res) => {
@@ -94,7 +92,7 @@ app.post("/api/auth/register", authenticateUser, async (req, res) => {
   }
 });
 
-// --- INFRASTRUCTURE AUDIT ROUTE (POSTGRESQL UPGRADE) ---
+// --- INFRASTRUCTURE AUDIT ROUTE ---
 let cachedAuditResults = null;
 let lastAuditTime = 0;
 
@@ -104,7 +102,6 @@ app.get("/api/audit", authenticateUser, async (req, res) => {
   }
 
   try {
-    // Fetch directly from live PostgreSQL database
     const { rows } = await pgDb.query(
       "SELECT * FROM resources WHERE status = 'Active'",
     );
@@ -123,37 +120,38 @@ app.get("/api/audit", authenticateUser, async (req, res) => {
   }
 });
 
-// --- ACTION & APPROVAL ROUTES ---
+// --- RBAC ACTION & APPROVAL ROUTES ---
 app.post("/api/action", authenticateUser, async (req, res) => {
-  const { actionType, resource_name, details } = req.body;
-  if (req.user.role === "Junior-Developer") {
-    pendingApprovals.push({
-      id: crypto.randomUUID(),
-      requester: req.user.name,
-      action: actionType,
-      resource: resource_name,
-      details: details || "Immediate",
-      time: new Date().toLocaleString(),
-    });
-    return res.json({
-      success: true,
-      pending: true,
-      message: "Action requires IT-Director approval. Request sent.",
-    });
-  }
+  const { actionType, resource_name } = req.body;
 
-  // PRODUCTION UPGRADE: If admin runs it, update the state directly in PostgreSQL
   try {
+    if (req.user.role === "Junior-Developer") {
+      // Junior triggers an approval state
+      await pgDb.query(
+        "UPDATE resources SET status = 'Pending Approval', pending_action_by = $1 WHERE resource_name = $2",
+        [req.user.name, resource_name],
+      );
+
+      cachedAuditResults = null;
+      lastAuditTime = 0;
+
+      return res.json({
+        success: true,
+        pending: true,
+        message: "Action requires IT-Director approval. Request sent.",
+      });
+    }
+
+    // Admins execute immediately
     let targetStatus = "Active";
     if (actionType === "TERMINATE") targetStatus = "Terminated";
     else if (actionType === "QUARANTINE") targetStatus = "Quarantined";
 
     await pgDb.query(
-      "UPDATE resources SET status = $1 WHERE resource_name = $2",
+      "UPDATE resources SET status = $1, pending_action_by = NULL WHERE resource_name = $2",
       [targetStatus, resource_name],
     );
 
-    // Wipe audit cache to refresh frontend display immediately
     cachedAuditResults = null;
     lastAuditTime = 0;
 
@@ -167,9 +165,23 @@ app.post("/api/action", authenticateUser, async (req, res) => {
   }
 });
 
-app.get("/api/approvals", authenticateUser, (req, res) => {
+app.get("/api/approvals", authenticateUser, async (req, res) => {
   if (req.user.role !== "IT-Director") return res.json([]);
-  res.json(pendingApprovals);
+
+  try {
+    const { rows } = await pgDb.query(
+      "SELECT * FROM resources WHERE status = 'Pending Approval'",
+    );
+    const pendingRequests = rows.map((row) => ({
+      id: row.id,
+      requester: row.pending_action_by,
+      action: "TERMINATE/QUARANTINE",
+      resource: row.resource_name,
+    }));
+    res.json(pendingRequests);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch approvals." });
+  }
 });
 
 app.post(
@@ -178,39 +190,35 @@ app.post(
   requireAdmin,
   async (req, res) => {
     const { id, decision } = req.body;
-    const requestIndex = pendingApprovals.findIndex((r) => r.id === id);
-    if (requestIndex === -1)
-      return res.status(404).json({ error: "Request no longer exists." });
 
-    const request = pendingApprovals[requestIndex];
-    pendingApprovals.splice(requestIndex, 1);
-
-    if (decision === "Approve") {
-      try {
-        let targetStatus = "Active";
-        if (request.action === "TERMINATE") targetStatus = "Terminated";
-        else if (request.action === "QUARANTINE") targetStatus = "Quarantined";
-
+    try {
+      if (decision === "Approve") {
         await pgDb.query(
-          "UPDATE resources SET status = $1 WHERE resource_name = $2",
-          [targetStatus, request.resource],
+          "UPDATE resources SET status = 'Terminated', pending_action_by = NULL WHERE id = $1",
+          [id],
         );
-        cachedAuditResults = null;
-        lastAuditTime = 0;
-      } catch (err) {
-        return res
-          .status(500)
-          .json({ error: "Approval pipeline database synchronization error." });
+      } else {
+        await pgDb.query(
+          "UPDATE resources SET status = 'Active', pending_action_by = NULL WHERE id = $1",
+          [id],
+        );
       }
-    }
 
-    res.json({
-      success: true,
-      message:
-        decision === "Approve"
-          ? `Approved ${request.action} for ${request.resource}`
-          : `Rejected ${request.requester}'s request.`,
-    });
+      cachedAuditResults = null;
+      lastAuditTime = 0;
+
+      res.json({
+        success: true,
+        message:
+          decision === "Approve"
+            ? "Approved and terminated."
+            : "Rejected user request.",
+      });
+    } catch (err) {
+      res
+        .status(500)
+        .json({ error: "Approval pipeline database synchronization error." });
+    }
   },
 );
 
@@ -259,7 +267,6 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
   if (chatHistory.length > 6) chatHistory.shift();
 
   try {
-    // Pull full resource list out of live PostgreSQL database for AI context mapping
     const { rows } = await pgDb.query("SELECT * FROM resources");
 
     const prompt = `You are "Infrastructure Assassin", an enterprise IT security AI.
@@ -315,5 +322,5 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 3000; // Let host determine runtime port dynamically
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🔥 BACKEND LIVE ON PORT ${PORT}`));

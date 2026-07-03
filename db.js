@@ -26,7 +26,8 @@ const initDb = async () => {
         days_since_last_login INTEGER,
         is_malicious BOOLEAN,
         needs_update BOOLEAN,
-        status TEXT
+        status TEXT,
+        pending_action_by TEXT DEFAULT NULL
       )
     `);
 
