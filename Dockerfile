@@ -1,5 +1,5 @@
-# Use a lightweight Node.js 18 image as the base
-FROM node:18-alpine
+# Use a lightweight Node.js 22 image as the base
+FROM node:22-alpine
 
 # Set the working directory inside the container
 WORKDIR /usr/src/app
@@ -10,7 +10,7 @@ COPY package*.json ./
 # Install only production dependencies (skips devDependencies)
 RUN npm install --production
 
-# Copy the rest of your application files (agent.js, server.js, public folder, etc.)
+# Copy the rest of your application files
 COPY . .
 
 # Expose the port your Express server listens on
