@@ -1007,7 +1007,9 @@
                         let displayActionText = item.recommended_action;
                         if (item.status === "Pending Approval") {
                             badgeClass = "pending";
-                            displayActionText = "Pending Approval";
+                            displayActionText = item.pending_action_type
+                                ? `Pending: ${item.pending_action_type}`
+                                : "Pending Approval";
                         } else if (secureAction.includes("TERMINATE"))
                             badgeClass = "terminate";
                         else if (secureAction.includes("QUARANTINE"))
@@ -1116,7 +1118,7 @@
                     requests.forEach((req) => {
                         list.innerHTML += `
                         <div class="inbox-card">
-                            <div><strong>${req.requester}</strong> requests policy authorization for <em>${req.resource}</em></div>
+                            <div><strong>${req.requester}</strong> requests <strong>${req.action}</strong> authorization for <em>${req.resource}</em></div>
                             <div style="display: flex; gap: 10px;">
                                 <button class="btn-approve" onclick="resolveAction('${req.id}', 'Approve')">Approve</button>
                                 <button class="btn-reject" onclick="resolveAction('${req.id}', 'Reject')">Reject</button>

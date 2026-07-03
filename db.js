@@ -27,8 +27,15 @@ const initDb = async () => {
         is_malicious BOOLEAN,
         needs_update BOOLEAN,
         status TEXT,
-        pending_action_by TEXT DEFAULT NULL
+        pending_action_by TEXT DEFAULT NULL,
+        pending_action_type TEXT DEFAULT NULL
       )
+    `);
+
+    // Safe for existing databases created before this column existed.
+    await client.query(`
+      ALTER TABLE resources
+      ADD COLUMN IF NOT EXISTS pending_action_type TEXT DEFAULT NULL
     `);
 
     // Verify if database needs mock data seed (only if table is empty)

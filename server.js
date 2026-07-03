@@ -167,14 +167,26 @@ app.get("/api/audit", authenticateUser, async (req, res) => {
 });
 
 // --- RBAC ACTION & APPROVAL ROUTES ---
+
+// Single source of truth for what each action type resolves to. Used both
+// when an Admin applies an action directly and when an Admin approves a
+// Developer's pending request, so the two paths can never drift apart.
+function resolveTargetStatus(actionType) {
+  if (actionType === "TERMINATE") return "Terminated";
+  if (actionType === "QUARANTINE") return "Quarantined";
+  if (actionType === "UPDATE") return "Updated";
+  if (actionType === "KEEP") return "Kept Active";
+  return "Active";
+}
+
 app.post("/api/action", authenticateUser, async (req, res) => {
   const { actionType, resource_name } = req.body;
 
   try {
     if (req.user.role === "Junior-Developer") {
       await pgDb.query(
-        "UPDATE resources SET status = 'Pending Approval', pending_action_by = $1 WHERE resource_name = $2",
-        [req.user.name, resource_name],
+        "UPDATE resources SET status = 'Pending Approval', pending_action_by = $1, pending_action_type = $2 WHERE resource_name = $3",
+        [req.user.name, actionType, resource_name],
       );
 
       cachedAuditResults = null;
@@ -195,14 +207,10 @@ app.post("/api/action", authenticateUser, async (req, res) => {
       });
     }
 
-    let targetStatus = "Active";
-    if (actionType === "TERMINATE") targetStatus = "Terminated";
-    else if (actionType === "QUARANTINE") targetStatus = "Quarantined";
-    else if (actionType === "UPDATE") targetStatus = "Updated";
-    else if (actionType === "KEEP") targetStatus = "Kept Active";
+    let targetStatus = resolveTargetStatus(actionType);
 
     await pgDb.query(
-      "UPDATE resources SET status = $1, pending_action_by = NULL WHERE resource_name = $2",
+      "UPDATE resources SET status = $1, pending_action_by = NULL, pending_action_type = NULL WHERE resource_name = $2",
       [targetStatus, resource_name],
     );
 
@@ -230,7 +238,7 @@ app.post("/api/action/cancel-request", authenticateUser, async (req, res) => {
   const { resource_name } = req.body;
   try {
     await pgDb.query(
-      "UPDATE resources SET status = 'Active', pending_action_by = NULL WHERE resource_name = $1",
+      "UPDATE resources SET status = 'Active', pending_action_by = NULL, pending_action_type = NULL WHERE resource_name = $1",
       [resource_name],
     );
     cachedAuditResults = null;
@@ -255,7 +263,7 @@ app.get("/api/approvals", authenticateUser, async (req, res) => {
     const pendingRequests = rows.map((row) => ({
       id: row.id,
       requester: row.pending_action_by,
-      action: "OPTIMIZATION POLICY",
+      action: row.pending_action_type || "UNKNOWN",
       resource: row.resource_name,
     }));
     res.json(pendingRequests);
@@ -272,30 +280,44 @@ app.post(
     const { id, decision } = req.body;
 
     try {
-      if (decision === "Approve") {
-        await pgDb.query(
-          "UPDATE resources SET status = 'Terminated', pending_action_by = NULL WHERE id = $1",
-          [id],
-        );
-      } else {
-        await pgDb.query(
-          "UPDATE resources SET status = 'Active', pending_action_by = NULL WHERE id = $1",
-          [id],
-        );
+      const { rows } = await pgDb.query(
+        "SELECT pending_action_type, resource_name FROM resources WHERE id = $1",
+        [id],
+      );
+      if (rows.length === 0) {
+        return res.status(404).json({ error: "Request not found." });
       }
+      const requestedAction = rows[0].pending_action_type;
+
+      let finalStatus;
+      let message;
+
+      if (decision === "Approve") {
+        // Apply whatever the developer actually asked for - Keep, Update,
+        // Quarantine, or Terminate - not a hardcoded outcome.
+        finalStatus = resolveTargetStatus(requestedAction);
+        message = `Approved. ${requestedAction || "Requested action"} applied to ${rows[0].resource_name}.`;
+      } else {
+        finalStatus = "Active";
+        message = "Rejected user request.";
+      }
+
+      await pgDb.query(
+        "UPDATE resources SET status = $1, pending_action_by = NULL, pending_action_type = NULL WHERE id = $2",
+        [finalStatus, id],
+      );
 
       cachedAuditResults = null;
       lastAuditTime = 0;
 
-      broadcastEvent("approval_resolved", { id, decision });
-
-      res.json({
-        success: true,
-        message:
-          decision === "Approve"
-            ? "Approved and terminated."
-            : "Rejected user request.",
+      broadcastEvent("approval_resolved", {
+        id,
+        decision,
+        requestedAction,
+        finalStatus,
       });
+
+      res.json({ success: true, message });
     } catch (err) {
       res
         .status(500)
