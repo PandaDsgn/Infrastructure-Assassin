@@ -5,7 +5,9 @@ const crypto = require("crypto");
 const { db, auth } = require("./firebase");
 const pgDb = require("./db");
 const { evaluateResource } = require("./agent");
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+// @google/generative-ai reached end-of-life on Nov 30, 2025 - use the
+// current unified SDK instead.
+const { GoogleGenAI } = require("@google/genai");
 
 const app = express();
 app.use(cors());
@@ -13,8 +15,17 @@ app.use(express.static("public"));
 app.use(express.json());
 
 // Initialize Gemini for the Conversational Chat Core
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const chatModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+if (!process.env.GEMINI_API_KEY) {
+  console.error(
+    "[STARTUP WARNING] GEMINI_API_KEY is not set in this environment - " +
+      "every /api/chat request will fail and fall back to the local NLP " +
+      "engine. Set it as a real environment variable/secret on the host " +
+      "(a .env file is not copied into the Docker image and most hosts " +
+      "don't read it in production).",
+  );
+}
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const CHAT_MODEL_NAME = "gemini-2.5-flash";
 
 // --- PUBLIC CONFIG ENDPOINT ---
 app.get("/api/config", (req, res) => {
@@ -435,13 +446,23 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
 
         Respond to: "${userMessage}"`;
 
-    const result = await chatModel.generateContent(prompt);
-    const finalReply = result.response.text().trim();
+    const result = await ai.models.generateContent({
+      model: CHAT_MODEL_NAME,
+      contents: prompt,
+    });
+    const finalReply = result.text.trim();
 
     chatHistory.push(`Assassin AI: ${finalReply}`);
     return res.json({ reply: finalReply });
   } catch (error) {
-    console.error("[GEMINI UNAVAILABLE]: Routing to Tier-2 Local NLP Engine.");
+    console.error(
+      `[GEMINI UNAVAILABLE] ${error.message || error} - Routing to Tier-2 Local NLP Engine.`,
+    );
+    if (error.status || error.statusText) {
+      console.error(
+        `[GEMINI UNAVAILABLE] HTTP status: ${error.status} ${error.statusText || ""}`,
+      );
+    }
 
     const msg = userMessage.toLowerCase();
     if (msg.includes("figma")) lastResourceContext = "figma";

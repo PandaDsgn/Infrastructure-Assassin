@@ -1,10 +1,13 @@
 // agent.js
 require("dotenv").config();
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+// @google/generative-ai reached end-of-life on Nov 30, 2025 - Google no
+// longer maintains it and calls against the current API can fail outright.
+// Use the current unified SDK instead.
+const { GoogleGenAI } = require("@google/genai");
 
 // Initialize Gemini Core
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const MODEL_NAME = "gemini-2.5-flash";
 
 const DEV_SANDBOX_MODE = false;
 
@@ -40,8 +43,11 @@ async function evaluateResource(resource) {
 
   try {
     // ⚡ THE GEMINI CLOUD PIPELINE ⚡
-    const result = await model.generateContent(prompt);
-    const rawResponse = result.response.text().toUpperCase();
+    const result = await ai.models.generateContent({
+      model: MODEL_NAME,
+      contents: prompt,
+    });
+    const rawResponse = result.text.toUpperCase();
 
     if (rawResponse.includes("QUARANTINE")) return "QUARANTINE";
     if (rawResponse.includes("TERMINATE")) return "TERMINATE";
