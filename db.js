@@ -1,5 +1,5 @@
 // db.js
-const { Pool } = require("pg");
+const { Pool, Client } = require("pg");
 require("dotenv").config();
 
 // Determine if we are running in the cloud or local development
@@ -118,7 +118,70 @@ const initDb = async () => {
 // Initialize schema on backend startup
 initDb();
 
+// --- CROSS-INSTANCE REALTIME BUS (Postgres LISTEN/NOTIFY) ---
+// The dashboard's live updates are pushed over SSE from an in-memory list of
+// connected clients kept in server.js. That works fine with a single Node
+// process, but breaks the moment there is more than one instance/replica of
+// this app running behind a load balancer (which is the norm on most cloud
+// hosts, even at low scale): a Junior-Developer's POST /api/action can land
+// on instance A while the IT-Director's SSE stream is held open on instance
+// B, so A's local broadcast never reaches B, and the Director only sees the
+// change on the next 15s poll instead of instantly.
+//
+// Postgres NOTIFY solves this without adding new infrastructure, since a
+// database connection is already required. Every instance opens ONE
+// dedicated, long-lived client and LISTENs on a channel; whichever instance
+// triggers an event NOTIFYs that channel, and Postgres fans it out to every
+// listening instance - including the one that published it.
+let listenerClient = null;
+let realtimeCallback = null;
+
+async function initRealtimeBus(onEvent) {
+  realtimeCallback = onEvent;
+
+  listenerClient = new Client({
+    connectionString: process.env.DATABASE_URL,
+    ssl: isProduction ? { rejectUnauthorized: false } : false,
+  });
+
+  listenerClient.on("error", (err) => {
+    console.error(
+      `[REALTIME BUS] Listener connection dropped: ${err.message}. Reconnecting in 2s...`,
+    );
+    setTimeout(() => initRealtimeBus(realtimeCallback), 2000);
+  });
+
+  listenerClient.on("notification", (msg) => {
+    if (msg.channel !== "realtime_events") return;
+    try {
+      const payload = JSON.parse(msg.payload);
+      realtimeCallback && realtimeCallback(payload);
+    } catch (err) {
+      console.error(
+        "[REALTIME BUS] Failed to parse notification:",
+        err.message,
+      );
+    }
+  });
+
+  await listenerClient.connect();
+  await listenerClient.query("LISTEN realtime_events");
+  console.log("📡 Realtime bus connected - LISTEN realtime_events");
+}
+
+// Publish an event to every instance (including this one). Use this instead
+// of writing directly to the local SSE client list.
+async function publishRealtimeEvent(type, data = {}) {
+  const payload = JSON.stringify({ type, data, timestamp: Date.now() });
+  // Use pg_notify() as a parameterized query rather than string-building
+  // "NOTIFY channel, 'payload'" - avoids the JSON string's quotes/backslashes
+  // breaking the SQL statement.
+  await pool.query("SELECT pg_notify('realtime_events', $1)", [payload]);
+}
+
 module.exports = {
   query: (text, params) => pool.query(text, params),
   pool,
+  initRealtimeBus,
+  publishRealtimeEvent,
 };

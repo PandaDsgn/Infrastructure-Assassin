@@ -79,16 +79,41 @@ function requireAdmin(req, res, next) {
 // having to poll or reload the page.
 let sseClients = []; // [{ uid, role, res }]
 
-function broadcastEvent(type, data = {}) {
-  const payload = JSON.stringify({ type, data, timestamp: Date.now() });
+// Pushes an already-built payload to every client connected to THIS
+// instance. This is called from two places: (1) below, kept for symmetry/
+// direct local testing, and (2) the pgDb realtime bus callback registered at
+// startup, which fires whenever ANY instance publishes an event - including
+// this one. That's what makes the broadcast reach every replica instead of
+// just whichever process happened to handle the originating request.
+function pushToLocalClients(payload) {
+  const message = JSON.stringify(payload);
   sseClients.forEach((client) => {
     try {
-      client.res.write(`data: ${payload}\n\n`);
+      client.res.write(`data: ${message}\n\n`);
     } catch (err) {
       // Dead connection - it will be cleaned up by the client's 'close' handler.
     }
   });
 }
+
+// Fire-and-forget: publishes to Postgres NOTIFY so every instance (this one
+// included, via the LISTEN subscription below) pushes it to its local SSE
+// clients. Callers keep using broadcastEvent(type, data) exactly as before.
+function broadcastEvent(type, data = {}) {
+  pgDb.publishRealtimeEvent(type, data).catch((err) => {
+    console.error(`[REALTIME BUS] Failed to publish "${type}":`, err.message);
+    // Fall back to at least notifying this instance's own clients so the
+    // person who triggered the action still sees it update.
+    pushToLocalClients({ type, data, timestamp: Date.now() });
+  });
+}
+
+// Subscribe this instance to the shared bus. Every event published by any
+// instance (via broadcastEvent -> publishRealtimeEvent) arrives here and
+// gets fanned out to whatever SSE clients happen to be connected locally.
+pgDb.initRealtimeBus(pushToLocalClients).catch((err) => {
+  console.error("[REALTIME BUS] Failed to initialize:", err.message);
+});
 
 app.get("/api/events", authenticateUser, (req, res) => {
   res.set({
