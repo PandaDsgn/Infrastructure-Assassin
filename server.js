@@ -64,6 +64,51 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+// --- REAL-TIME EVENT STREAM (SERVER-SENT EVENTS) ---
+// Keeps a live, push-based channel open to every connected dashboard so that
+// resource/approval/personnel changes appear instantly without any client
+// having to poll or reload the page.
+let sseClients = []; // [{ uid, role, res }]
+
+function broadcastEvent(type, data = {}) {
+  const payload = JSON.stringify({ type, data, timestamp: Date.now() });
+  sseClients.forEach((client) => {
+    try {
+      client.res.write(`data: ${payload}\n\n`);
+    } catch (err) {
+      // Dead connection - it will be cleaned up by the client's 'close' handler.
+    }
+  });
+}
+
+app.get("/api/events", authenticateUser, (req, res) => {
+  res.set({
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no", // Disable buffering on reverse proxies (e.g. nginx)
+  });
+  res.flushHeaders();
+  res.write(": connected\n\n");
+
+  const client = { uid: req.user.uid, role: req.user.role, res };
+  sseClients.push(client);
+
+  // Heartbeat prevents idle-timeout disconnects on load balancers/proxies.
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(": heartbeat\n\n");
+    } catch (err) {
+      clearInterval(heartbeat);
+    }
+  }, 20000);
+
+  req.on("close", () => {
+    clearInterval(heartbeat);
+    sseClients = sseClients.filter((c) => c !== client);
+  });
+});
+
 // --- IDENTITY & REGISTRATION ENDPOINTS ---
 app.get("/api/auth/me", authenticateUser, (req, res) => {
   res.json({ name: req.user.name, role: req.user.role, email: req.user.email });
@@ -86,6 +131,7 @@ app.post("/api/auth/register", authenticateUser, async (req, res) => {
         role: assignedRole,
         email: req.user.email,
       });
+    broadcastEvent("user_registered", { uid, role: assignedRole });
     res.json({ success: true, role: assignedRole });
   } catch (error) {
     res.status(500).json({ error: "Failed to create user profile." });
@@ -134,6 +180,14 @@ app.post("/api/action", authenticateUser, async (req, res) => {
       cachedAuditResults = null;
       lastAuditTime = 0;
 
+      // Push this immediately to every connected dashboard (esp. Admins)
+      // so the pending request shows up in real time.
+      broadcastEvent("resource_pending", {
+        resource_name,
+        requester: req.user.name,
+        actionType,
+      });
+
       return res.json({
         success: true,
         pending: true,
@@ -155,6 +209,12 @@ app.post("/api/action", authenticateUser, async (req, res) => {
     cachedAuditResults = null;
     lastAuditTime = 0;
 
+    broadcastEvent("resource_updated", {
+      resource_name,
+      status: targetStatus,
+      actor: req.user.name,
+    });
+
     res.json({
       success: true,
       pending: false,
@@ -175,6 +235,10 @@ app.post("/api/action/cancel-request", authenticateUser, async (req, res) => {
     );
     cachedAuditResults = null;
     lastAuditTime = 0;
+    broadcastEvent("resource_cancelled", {
+      resource_name,
+      actor: req.user.name,
+    });
     res.json({ success: true, message: "Request discarded cleanly." });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -223,6 +287,8 @@ app.post(
       cachedAuditResults = null;
       lastAuditTime = 0;
 
+      broadcastEvent("approval_resolved", { id, decision });
+
       res.json({
         success: true,
         message:
@@ -267,17 +333,18 @@ app.delete(
 
       // If the target is an IT Director, block the action completely
       if (doc.exists && doc.data().role === "IT-Director") {
-        return res
-          .status(403)
-          .json({
-            error:
-              "ACCESS DENIED: IT Directors cannot terminate other IT Directors.",
-          });
+        return res.status(403).json({
+          error:
+            "ACCESS DENIED: IT Directors cannot terminate other IT Directors.",
+        });
       }
 
       // 2. Fall through to clear Junior Developer instances if safe
       await auth.deleteUser(targetUid);
       await userRef.delete();
+
+      broadcastEvent("user_removed", { targetUid, actor: req.user.name });
+
       res.json({
         success: true,
         message: "Personnel permanently erased from all systems.",

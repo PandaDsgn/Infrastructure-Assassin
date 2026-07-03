@@ -608,6 +608,109 @@
             let currentInboxHash = "";
             let currentUserHash = "";
 
+            // --- REAL-TIME SYNC (SERVER-SENT EVENTS) ---
+            // Native EventSource can't send an Authorization header, and this
+            // app authenticates with Bearer tokens (not cookies), so we open
+            // the stream with fetch() instead and parse the SSE frames by hand.
+            let sseAbortController = null;
+
+            async function startRealtimeSync() {
+                if (sseAbortController) sseAbortController.abort();
+                sseAbortController = new AbortController();
+                const { signal } = sseAbortController;
+
+                while (!signal.aborted) {
+                    try {
+                        const response = await fetch("/api/events", {
+                            headers: getAuthHeaders(),
+                            signal,
+                        });
+                        if (!response.ok || !response.body) {
+                            throw new Error(
+                                "Real-time stream unavailable (" +
+                                    response.status +
+                                    ")",
+                            );
+                        }
+
+                        const reader = response.body.getReader();
+                        const decoder = new TextDecoder();
+                        let buffer = "";
+
+                        while (true) {
+                            const { value, done } = await reader.read();
+                            if (done) break;
+                            buffer += decoder.decode(value, { stream: true });
+
+                            let sepIndex;
+                            while ((sepIndex = buffer.indexOf("\n\n")) !== -1) {
+                                const rawEvent = buffer.slice(0, sepIndex);
+                                buffer = buffer.slice(sepIndex + 2);
+
+                                const dataLine = rawEvent
+                                    .split("\n")
+                                    .find((line) => line.startsWith("data:"));
+                                if (!dataLine) continue; // heartbeats/comments
+
+                                try {
+                                    const payload = JSON.parse(
+                                        dataLine.slice(5).trim(),
+                                    );
+                                    handleRealtimeEvent(payload);
+                                } catch (parseErr) {
+                                    // Ignore malformed frame
+                                }
+                            }
+                        }
+                    } catch (error) {
+                        if (signal.aborted) return; // Logged out intentionally
+                        console.warn(
+                            "Real-time stream dropped, reconnecting in 3s...",
+                            error,
+                        );
+                        await new Promise((resolve) =>
+                            setTimeout(resolve, 3000),
+                        );
+                    }
+                }
+            }
+
+            function handleRealtimeEvent(payload) {
+                const roleEl = document.getElementById("display-role");
+                const role = roleEl ? roleEl.innerText : null;
+
+                switch (payload.type) {
+                    case "resource_pending":
+                    case "resource_updated":
+                    case "resource_cancelled":
+                        currentAuditHash = ""; // Force a refresh next tick
+                        runAudit();
+                        if (role === "IT-Director") {
+                            currentInboxHash = "";
+                            loadAdminInbox();
+                        }
+                        break;
+
+                    case "approval_resolved":
+                        currentInboxHash = "";
+                        currentAuditHash = "";
+                        loadAdminInbox();
+                        runAudit();
+                        break;
+
+                    case "user_registered":
+                    case "user_removed":
+                        if (role === "IT-Director") {
+                            currentUserHash = "";
+                            loadAdminUsers();
+                        }
+                        break;
+
+                    default:
+                        break;
+                }
+            }
+
             function toggleTheme() {
                 const html = document.documentElement;
                 if (html.getAttribute("data-theme") === "dark") {
@@ -719,6 +822,7 @@
                     }
 
                     runAudit();
+                    startRealtimeSync();
                 } catch (error) {
                     errorText.innerText = error.message;
                     errorText.style.display = "block";
@@ -729,6 +833,7 @@
             }
 
             function handleLogout() {
+                if (sseAbortController) sseAbortController.abort();
                 firebase
                     .auth()
                     .signOut()
@@ -1143,7 +1248,11 @@
                 if (localStorage.getItem("aegis_token")) handleLogout();
             };
 
-            // Global Real-Time Synchronization Loop
+            // Fallback Synchronization Loop.
+            // The SSE stream above (startRealtimeSync) is now the primary,
+            // instant path for updates. This poll just re-syncs state as a
+            // safety net if the stream is ever reconnecting or blocked by a
+            // proxy; the hash-diffing in each load function keeps it cheap.
             setInterval(() => {
                 const mainApp = document.getElementById("main-app");
                 if (mainApp && mainApp.style.display === "block") {
@@ -1155,7 +1264,7 @@
                         loadAdminUsers();
                     }
                 }
-            }, 3000);
+            }, 15000);
         </script>
     </body>
 </html>
