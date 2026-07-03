@@ -103,7 +103,7 @@ app.get("/api/audit", authenticateUser, async (req, res) => {
 
   try {
     const { rows } = await pgDb.query(
-      "SELECT * FROM resources WHERE status = 'Active'",
+      "SELECT * FROM resources WHERE status = 'Active' OR status = 'Pending Approval'",
     );
 
     const auditedResources = [];
@@ -126,7 +126,6 @@ app.post("/api/action", authenticateUser, async (req, res) => {
 
   try {
     if (req.user.role === "Junior-Developer") {
-      // Junior triggers an approval state
       await pgDb.query(
         "UPDATE resources SET status = 'Pending Approval', pending_action_by = $1 WHERE resource_name = $2",
         [req.user.name, resource_name],
@@ -138,14 +137,15 @@ app.post("/api/action", authenticateUser, async (req, res) => {
       return res.json({
         success: true,
         pending: true,
-        message: "Action requires IT-Director approval. Request sent.",
+        message: `${actionType} request routed to Admin control queue.`,
       });
     }
 
-    // Admins execute immediately
     let targetStatus = "Active";
     if (actionType === "TERMINATE") targetStatus = "Terminated";
     else if (actionType === "QUARANTINE") targetStatus = "Quarantined";
+    else if (actionType === "UPDATE") targetStatus = "Updated";
+    else if (actionType === "KEEP") targetStatus = "Kept Active";
 
     await pgDb.query(
       "UPDATE resources SET status = $1, pending_action_by = NULL WHERE resource_name = $2",
@@ -158,10 +158,26 @@ app.post("/api/action", authenticateUser, async (req, res) => {
     res.json({
       success: true,
       pending: false,
-      message: `${actionType} protocol successfully committed to live cloud ledger.`,
+      message: `${actionType} protocol successfully committed to cloud ledger.`,
     });
   } catch (error) {
     res.status(500).json({ error: "Failed to apply resource state update." });
+  }
+});
+
+// Route to drop a developer's request from the queue completely
+app.post("/api/action/cancel-request", authenticateUser, async (req, res) => {
+  const { resource_name } = req.body;
+  try {
+    await pgDb.query(
+      "UPDATE resources SET status = 'Active', pending_action_by = NULL WHERE resource_name = $1",
+      [resource_name],
+    );
+    cachedAuditResults = null;
+    lastAuditTime = 0;
+    res.json({ success: true, message: "Request discarded cleanly." });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -175,7 +191,7 @@ app.get("/api/approvals", authenticateUser, async (req, res) => {
     const pendingRequests = rows.map((row) => ({
       id: row.id,
       requester: row.pending_action_by,
-      action: "TERMINATE/QUARANTINE",
+      action: "OPTIMIZATION POLICY",
       resource: row.resource_name,
     }));
     res.json(pendingRequests);
@@ -245,11 +261,25 @@ app.delete(
   async (req, res) => {
     const { targetUid } = req.params;
     try {
+      // 1. Fetch user snapshot profile from Firestore to inspect authority rank
+      const userRef = db.collection("users").doc(targetUid);
+      const doc = await userRef.get();
+
+      if (doc.exists && doc.data().role === "IT-Director") {
+        return res
+          .status(403)
+          .json({
+            error:
+              "ACCESS DENIED: IT Directors cannot terminate other IT Directors.",
+          });
+      }
+
+      // 2. Fall through to clear Junior Developer instances if safe
       await auth.deleteUser(targetUid);
-      await db.collection("users").doc(targetUid).delete();
+      await userRef.delete();
       res.json({
         success: true,
-        message: "User permanently erased from all systems.",
+        message: "Personnel permanently erased from all systems.",
       });
     } catch (error) {
       res.status(500).json({ error: "Failed to completely delete user." });

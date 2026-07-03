@@ -164,6 +164,11 @@
                 background: #dcfce3;
                 color: #15803d;
             }
+            .badge-pending {
+                background: #fef08a;
+                color: #854d0e;
+            }
+
             .details {
                 display: grid;
                 grid-template-columns: 1fr 1fr;
@@ -176,9 +181,9 @@
                 border-radius: 6px;
                 border: 1px solid var(--border-color);
             }
-            .action-bar,
-            .schedule-bar {
+            .action-bar {
                 display: flex;
+                flex-wrap: wrap;
                 gap: 8px;
                 margin-bottom: 12px;
                 align-items: center;
@@ -198,16 +203,7 @@
             button:hover {
                 background: var(--border-color);
             }
-            .btn-terminate {
-                background: var(--danger);
-                color: white;
-                border: none;
-                flex: 0 0 auto;
-                padding: 8px 16px;
-                min-width: 90px;
-            }
 
-            /* --- NEW CANCEL UI ANIMATION --- */
             @keyframes pulse-warning {
                 0% {
                     box-shadow: 0 0 0 0 rgba(234, 88, 12, 0.7);
@@ -224,6 +220,11 @@
                 color: white !important;
                 border-color: var(--warning) !important;
                 animation: pulse-warning 1.5s infinite;
+            }
+            .btn-now-active {
+                background: var(--primary) !important;
+                color: white !important;
+                border-color: var(--primary) !important;
             }
 
             #loadingText {
@@ -263,7 +264,7 @@
                 color: white;
                 border: none;
                 flex: 0 0 auto;
-                min-width: 120px; /* Kept wide enough to fit 'Undo (24h)' */
+                min-width: 120px;
             }
             #chat-widget {
                 position: fixed;
@@ -414,7 +415,6 @@
         <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
 
         <script>
-            // Fetch the config from the backend .env securely
             async function initializeFirebaseApp() {
                 try {
                     const response = await fetch("/api/config");
@@ -428,7 +428,6 @@
                     );
                 }
             }
-            // Run this immediately as the page loads
             initializeFirebaseApp();
         </script>
     </head>
@@ -437,12 +436,10 @@
             <div class="auth-card">
                 <h2 id="auth-title">Corporate SSO</h2>
                 <p id="auth-subtitle">Aegis Corp Identity Provider</p>
-
                 <div class="input-group" id="name-group" style="display: none">
                     <label>Full Name</label>
                     <input type="text" id="name-input" placeholder="John Doe" />
                 </div>
-
                 <div class="input-group">
                     <label>Corporate Email</label>
                     <input
@@ -462,7 +459,6 @@
                         "
                     />
                 </div>
-
                 <div
                     class="input-group"
                     id="invite-group"
@@ -475,7 +471,6 @@
                         placeholder="Leave blank for Junior Dev"
                     />
                 </div>
-
                 <button
                     class="auth-btn"
                     id="auth-submit-btn"
@@ -493,7 +488,6 @@
                         display: none;
                     "
                 ></p>
-
                 <div style="text-align: center; margin-top: 15px">
                     <button
                         class="btn-logout"
@@ -608,7 +602,8 @@
         </div>
 
         <script>
-            // --- THEME ---
+            let activeTimers = {}; // Tracking context instances globally
+
             function toggleTheme() {
                 const html = document.documentElement;
                 if (html.getAttribute("data-theme") === "dark") {
@@ -629,7 +624,6 @@
                 };
             }
 
-            // --- AUTH TOGGLE ---
             let isSignUpMode = false;
             function toggleAuthMode() {
                 isSignUpMode = !isSignUpMode;
@@ -637,7 +631,6 @@
                     isSignUpMode ? "block" : "none";
                 document.getElementById("invite-group").style.display =
                     isSignUpMode ? "block" : "none";
-
                 document.getElementById("auth-title").innerText = isSignUpMode
                     ? "Create Account"
                     : "Corporate SSO";
@@ -650,7 +643,6 @@
                 document.getElementById("login-error").style.display = "none";
             }
 
-            // --- MASTER AUTH LOGIC ---
             async function handleAuth(e) {
                 if (e) e.preventDefault();
                 const email = document.getElementById("email-input").value;
@@ -731,8 +723,6 @@
                     .signOut()
                     .then(() => {
                         localStorage.removeItem("aegis_token");
-                        document.getElementById("email-input").value = "";
-                        document.getElementById("password-input").value = "";
                         document.getElementById("main-app").style.display =
                             "none";
                         document.getElementById("sso-screen").style.display =
@@ -741,83 +731,105 @@
                     });
             }
 
-            // --- DELAYED TERMINATION LOGIC ---
-            function getShortTimeFormat(seconds) {
-                if (seconds >= 3600) return Math.ceil(seconds / 3600) + "h";
-                if (seconds >= 60) return Math.ceil(seconds / 60) + "m";
-                return seconds + "s";
-            }
+            // --- UNIVERSAL PIPELINE LOGIC (FOR BOTH USERS AND INFRASTRUCTURE) ---
+            function initiateLifecycle(
+                elementId,
+                actionType,
+                referenceId,
+                targetCategory,
+            ) {
+                if (activeTimers[elementId]) return;
 
-            function handleDelayedTermination(btn, actionType, resourceName) {
-                // If the interval already exists, the user is clicking to cancel
-                if (btn.dataset.intervalId) {
-                    clearInterval(parseInt(btn.dataset.intervalId));
-                    delete btn.dataset.intervalId;
-                    btn.innerText = "Terminate";
-                    btn.classList.remove("btn-undo-active"); // Remove pulse UI
-                    return;
+                const container = document.getElementById(elementId);
+                const originalHtml = container.innerHTML;
+                let timeLeft = 10;
+
+                container.innerHTML = `
+                    <button class="btn-undo-active" id="undo-${elementId}">⏳ Undo (${timeLeft}s)</button>
+                    <button class="btn-now-active" id="now-${elementId}">${actionType} Now</button>
+                `;
+
+                // Handle developers clearing their entry from the admin dashboard[cite: 9]
+                const role = document.getElementById("display-role").innerText;
+                if (
+                    role === "Junior-Developer" &&
+                    targetCategory === "resource"
+                ) {
+                    executeSecurityAction(actionType, referenceId, true);
                 }
 
-                let timeLeft = 86400; // 1 day (24 hours) in seconds
-
-                const updateButtonText = () => {
-                    btn.innerText = `⏳ Undo (${getShortTimeFormat(timeLeft)})`;
-                };
-
-                updateButtonText();
-                btn.classList.add("btn-undo-active"); // Apply pulse UI
-
-                const countdown = setInterval(() => {
+                const countdown = setInterval(async () => {
                     timeLeft--;
-                    if (timeLeft > 0) {
-                        updateButtonText();
-                    } else {
+                    const undoBtn = document.getElementById(
+                        `undo-${elementId}`,
+                    );
+                    if (undoBtn) undoBtn.innerText = `⏳ Undo (${timeLeft}s)`;
+
+                    if (timeLeft <= 0) {
                         clearInterval(countdown);
-                        delete btn.dataset.intervalId;
-                        btn.classList.remove("btn-undo-active");
-                        btn.innerText = "Executing...";
-                        btn.style.backgroundColor = "var(--danger)";
-                        executeSecurityAction(actionType, resourceName);
+                        delete activeTimers[elementId];
+                        if (targetCategory === "resource") {
+                            executeSecurityAction(
+                                actionType,
+                                referenceId,
+                                false,
+                            );
+                        } else {
+                            deleteUserByAdmin(referenceId, true);
+                        }
                     }
                 }, 1000);
 
-                btn.dataset.intervalId = countdown;
-            }
-
-            function handleDelayedUserTermination(btn, targetUid) {
-                // If the interval already exists, the user is clicking to cancel
-                if (btn.dataset.intervalId) {
-                    clearInterval(parseInt(btn.dataset.intervalId));
-                    delete btn.dataset.intervalId;
-                    btn.innerText = "Terminate";
-                    btn.classList.remove("btn-undo-active"); // Remove pulse UI
-                    return;
-                }
-
-                let timeLeft = 86400; // 1 day (24 hours) in seconds
-
-                const updateButtonText = () => {
-                    btn.innerText = `⏳ Undo (${getShortTimeFormat(timeLeft)})`;
+                activeTimers[elementId] = {
+                    countdown,
+                    originalHtml,
+                    actionType,
+                    referenceId,
+                    targetCategory,
                 };
 
-                updateButtonText();
-                btn.classList.add("btn-undo-active"); // Apply pulse UI
-
-                const countdown = setInterval(() => {
-                    timeLeft--;
-                    if (timeLeft > 0) {
-                        updateButtonText();
-                    } else {
+                document.getElementById(`undo-${elementId}`).onclick =
+                    async () => {
                         clearInterval(countdown);
-                        delete btn.dataset.intervalId;
-                        btn.classList.remove("btn-undo-active");
-                        btn.innerText = "Executing...";
-                        btn.style.backgroundColor = "var(--danger)";
-                        deleteUserByAdmin(targetUid, true); // Skip the confirm popup
-                    }
-                }, 1000);
+                        const cacheRef = activeTimers[elementId];
+                        delete activeTimers[elementId];
+                        container.innerHTML = cacheRef.originalHtml;
 
-                btn.dataset.intervalId = countdown;
+                        if (
+                            role === "Junior-Developer" &&
+                            cacheRef.targetCategory === "resource"
+                        ) {
+                            // Roll state machine variables back on backend side directly
+                            await fetch("/api/action/cancel-request", {
+                                method: "POST",
+                                headers: getAuthHeaders(),
+                                body: JSON.stringify({
+                                    resource_name: cacheRef.referenceId,
+                                }),
+                            });
+                            alert(
+                                "Transaction dropped. Request retracted from Admin ledger.",
+                            );
+                        } else {
+                            alert("Action execution halted successfully.");
+                        }
+                        runAudit();
+                    };
+
+                document.getElementById(`now-${elementId}`).onclick = () => {
+                    clearInterval(countdown);
+                    const cacheRef = activeTimers[elementId];
+                    delete activeTimers[elementId];
+                    if (cacheRef.targetCategory === "resource") {
+                        executeSecurityAction(
+                            cacheRef.actionType,
+                            cacheRef.referenceId,
+                            false,
+                        );
+                    } else {
+                        deleteUserByAdmin(cacheRef.referenceId, true);
+                    }
+                };
             }
 
             // --- DASHBOARD LOGIC ---
@@ -838,33 +850,39 @@
 
                     data.forEach((item) => {
                         const cost = Number(item.monthly_cost) || 0;
-                        totalCost += cost;
+                        if (item.status === "Active") totalCost += cost;
+
                         const secureAction = String(item.recommended_action)
                             .toUpperCase()
                             .trim();
-
                         if (
-                            secureAction.includes("TERMINATE") ||
-                            secureAction.includes("QUARANTINE")
-                        )
+                            item.status === "Active" &&
+                            (secureAction.includes("TERMINATE") ||
+                                secureAction.includes("QUARANTINE"))
+                        ) {
                             potentialSavings += cost;
+                        }
 
                         let badgeClass = "keep";
-                        if (secureAction.includes("ERROR"))
-                            badgeClass = "error";
-                        else if (secureAction.includes("TERMINATE"))
+                        let displayActionText = item.recommended_action;
+                        if (item.status === "Pending Approval") {
+                            badgeClass = "pending";
+                            displayActionText = "Pending Approval";
+                        } else if (secureAction.includes("TERMINATE"))
                             badgeClass = "terminate";
                         else if (secureAction.includes("QUARANTINE"))
                             badgeClass = "quarantine";
                         else if (secureAction.includes("UPDATE"))
                             badgeClass = "update";
 
+                        const sanitizeId = "res-" + item.id;
+
                         resultsDiv.innerHTML += `
                         <div class="card">
                             <div>
                                 <div class="card-header">
                                     <div><h3 class="resource-name">${item.resource_name}</h3><div class="resource-type">${item.resource_type}</div></div>
-                                    <div class="badge badge-${badgeClass}">Agent flags: ${item.recommended_action}</div>
+                                    <div class="badge badge-${badgeClass}">Status: ${displayActionText}</div>
                                 </div>
                                 <div class="details">
                                     <div>Owner: <br><strong>${item.employee_name}</strong></div>
@@ -873,14 +891,12 @@
                                     <div>Time Idle: <br><strong>${item.days_since_last_login} days</strong></div>
                                 </div>
                             </div>
-                            <div>
+                            <div id="${sanitizeId}">
                                 <div class="action-bar">
-                                    <button onclick="executeSecurityAction('KEEP', '${item.resource_name}')">Keep</button>
-                                    <button onclick="executeSecurityAction('UPDATE', '${item.resource_name}')">Update</button>
-                                    <button onclick="executeSecurityAction('QUARANTINE', '${item.resource_name}')">Quarantine</button>
-                                </div>
-                                <div class="schedule-bar">
-                                    <button class="btn-terminate" onclick="executeSecurityAction('TERMINATE', '${item.resource_name}')">Terminate</button>
+                                    <button onclick="initiateLifecycle('${sanitizeId}', 'KEEP', '${item.resource_name}', 'resource')">Keep</button>
+                                    <button onclick="initiateLifecycle('${sanitizeId}', 'UPDATE', '${item.resource_name}', 'resource')">Update</button>
+                                    <button onclick="initiateLifecycle('${sanitizeId}', 'QUARANTINE', '${item.resource_name}', 'resource')">Quarantine</button>
+                                    <button class="btn-terminate" style="width:100%; margin-top:4px;" onclick="initiateLifecycle('${sanitizeId}', 'TERMINATE', '${item.resource_name}', 'resource')">Terminate</button>
                                 </div>
                             </div>
                         </div>`;
@@ -902,37 +918,35 @@
                 }
             }
 
-            async function executeSecurityAction(actionType, resourceName) {
+            async function executeSecurityAction(
+                actionType,
+                resourceName,
+                silentPreFlight = false,
+            ) {
                 try {
                     const response = await fetch("/api/action", {
                         method: "POST",
                         headers: getAuthHeaders(),
                         body: JSON.stringify({
-                            actionType: actionType, // This now correctly sends 'TERMINATE', 'QUARANTINE', etc.
+                            actionType,
                             resource_name: resourceName,
                         }),
                     });
                     const data = await response.json();
 
-                    // This handles the server's response regarding whether it was 'pending' or 'committed'
-                    if (data.pending) {
-                        alert(`🛡️ APPROVAL REQUIRED: ${data.message}`);
-                    } else {
-                        alert(`✅ SUCCESS: ${data.message}`);
-                    }
-
-                    // Refresh dashboard to show new status
-                    runAudit();
-
-                    // Refresh admin inbox if user is IT-Director
-                    if (
-                        document.getElementById("display-role").innerText ===
-                        "IT-Director"
-                    ) {
-                        loadAdminInbox();
+                    if (!silentPreFlight) {
+                        if (data.pending)
+                            alert(`🛡️ DISPATCHED: ${data.message}`);
+                        else alert(`✅ SUCCESS: ${data.message}`);
+                        runAudit();
+                        if (
+                            document.getElementById("display-role")
+                                .innerText === "IT-Director"
+                        )
+                            loadAdminInbox();
                     }
                 } catch (error) {
-                    alert("Action failed: " + error.message);
+                    if (!silentPreFlight) alert("Action failed.");
                 }
             }
 
@@ -953,7 +967,7 @@
                     requests.forEach((req) => {
                         list.innerHTML += `
                         <div class="inbox-card">
-                            <div><strong>${req.requester}</strong> requested to <strong style="color: var(--danger);">${req.action}</strong> <em>${req.resource}</em></div>
+                            <div><strong>${req.requester}</strong> requests policy authorization for <em>${req.resource}</em></div>
                             <div style="display: flex; gap: 10px;">
                                 <button class="btn-approve" onclick="resolveAction('${req.id}', 'Approve')">Approve</button>
                                 <button class="btn-reject" onclick="resolveAction('${req.id}', 'Reject')">Reject</button>
@@ -975,6 +989,7 @@
                     const data = await response.json();
                     alert(data.message);
                     loadAdminInbox();
+                    runAudit();
                 } catch (error) {
                     alert("Resolution failed.");
                 }
@@ -995,13 +1010,14 @@
                             "<p style='color: var(--text-muted);'>No other personnel found.</p>");
 
                     users.forEach((u) => {
+                        const userDivId = "user-row-" + u.uid;
                         list.innerHTML += `
-                            <div class="inbox-card">
+                            <div class="inbox-card" id="${userDivId}">
                                 <div>
                                     <strong>${u.name}</strong><br>
                                     <span style="font-size: 0.8rem; color: var(--text-muted);">${u.email} (${u.role})</span>
                                 </div>
-                                <button class="btn-reject" onclick="handleDelayedUserTermination(this, '${u.uid}')">Terminate</button>
+                                <button class="btn-reject" onclick="initiateLifecycle('${userDivId}', 'TERMINATE', '${u.uid}', 'user')">Terminate</button>
                             </div>`;
                     });
                 } catch (error) {
@@ -1010,13 +1026,6 @@
             }
 
             async function deleteUserByAdmin(targetUid, skipConfirm = false) {
-                if (!skipConfirm) {
-                    const isSure = confirm(
-                        "⚠️ Are you sure you want to permanently erase this user from the system?",
-                    );
-                    if (!isSure) return;
-                }
-
                 try {
                     const response = await fetch(`/api/users/${targetUid}`, {
                         method: "DELETE",
@@ -1025,10 +1034,11 @@
                     const data = await response.json();
 
                     if (response.ok) {
-                        alert("User erased successfully.");
+                        alert("User removed successfully.");
                         loadAdminUsers();
                     } else {
-                        alert(`Termination failed: ${data.error}`);
+                        alert(`Operation Fault: ${data.error}`);
+                        loadAdminUsers();
                     }
                 } catch (error) {
                     alert("Server error during deletion.");
