@@ -453,7 +453,7 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
     const finalReply = result.text.trim();
 
     chatHistory.push(`Assassin AI: ${finalReply}`);
-    return res.json({ reply: finalReply });
+    return res.json({ reply: finalReply, source: "gemini" });
   } catch (error) {
     console.error(
       `[GEMINI UNAVAILABLE] ${error.message || error} - Routing to Tier-2 Local NLP Engine.`,
@@ -493,7 +493,7 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
         "AWS EC2 Production is secure and active. Recommendation: KEEP.";
 
     chatHistory.push(`Assassin AI: ${localReply}`);
-    return res.json({ reply: localReply });
+    return res.json({ reply: localReply, source: "local-fallback" });
   }
 });
 

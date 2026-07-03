@@ -1200,9 +1200,15 @@
                         body: JSON.stringify({ message: message }),
                     });
                     const data = await response.json();
+                    const sourceTag =
+                        data.source === "local-fallback"
+                            ? '<div style="font-size: 0.7rem; color: var(--warning); margin-top: 4px;">⚠ local fallback (Gemini unavailable)</div>'
+                            : data.source === "gemini"
+                              ? '<div style="font-size: 0.7rem; color: var(--success); margin-top: 4px;">● Gemini</div>'
+                              : "";
                     document.getElementById(typingId).innerHTML = data.error
                         ? `<span style="color:var(--danger)">${data.error}</span>`
-                        : data.reply;
+                        : `${data.reply}${sourceTag}`;
                 } catch (error) {
                     document.getElementById(typingId).innerText =
                         "Error communicating with AI core.";
