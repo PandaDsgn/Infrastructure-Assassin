@@ -1,0 +1,5 @@
+node_modules/
+ledger.sqlite
+.env
+.DS_Store
+firebase-service-account.json
