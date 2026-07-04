@@ -443,11 +443,42 @@ app.delete(
 );
 
 // --- CONVERSATIONAL AI ---
+let activeUserTiers = {}; // { uid: "gemini" | "groq" | "deepseek" | "auto" }
 let chatHistory = [];
-let lastResourceContext = null;
 
 app.post("/api/chat", authenticateUser, async (req, res) => {
-  const userMessage = req.body.message;
+  const userMessage = req.body.message.trim();
+  const userId = req.user.uid;
+
+  // Initialize user preference to "auto" (default waterfall) if not set
+  if (!activeUserTiers[userId]) {
+    activeUserTiers[userId] = "auto";
+  }
+
+  // ==========================================
+  // COMMAND INTERCEPTOR
+  // ==========================================
+  const commandMsg = userMessage.toLowerCase();
+  if (commandMsg.startsWith("/use ")) {
+    const target = commandMsg.replace("/use ", "").trim();
+
+    if (["gemini", "groq", "deepseek", "auto"].includes(target)) {
+      activeUserTiers[userId] = target;
+
+      const targetDisplay =
+        target === "auto" ? "Default Waterfall Cascade" : target.toUpperCase();
+      const confirmationReply = `Routing preference updated. System is now locked to: **${targetDisplay}**.`;
+
+      chatHistory.push(`System: Locked to ${target}`);
+      return res.json({ reply: confirmationReply, source: `System Override` });
+    } else {
+      return res.json({
+        reply: `Unknown target. Please use: \`/use gemini\`, \`/use groq\`, \`/use deepseek\`, or \`/use auto\`.`,
+        source: `System Error`,
+      });
+    }
+  }
+
   chatHistory.push(`User: ${userMessage}`);
   if (chatHistory.length > 6) chatHistory.shift();
 
@@ -473,96 +504,124 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
         2. Tell the user to use dashboard buttons.
         3. If Junior-Developer, remind them it requires approval.`;
 
+  const userPreference = activeUserTiers[userId];
+
   // ==========================================
-  // TIER 1: GEMINI (Primary)
+  // TIER 1: GEMINI
   // ==========================================
-  try {
-    if (!process.env.GEMINI_API_KEY) throw new Error("No Gemini key found");
-    const result = await ai.models.generateContent({
-      model: CHAT_MODEL_NAME,
-      contents: `${systemPrompt}\n\nRespond to: "${userMessage}"`,
-    });
-    const finalReply = result.text.trim();
-    chatHistory.push(`Assassin AI: ${finalReply}`);
-    return res.json({ reply: finalReply, source: "Gemini (Tier 1)" });
-  } catch (err) {
-    console.warn(`[GEMINI FAILED] ${err.message}. Routing to Tier-2 Groq...`);
+  if (userPreference === "auto" || userPreference === "gemini") {
+    try {
+      if (!process.env.GEMINI_API_KEY) throw new Error("No Gemini key found");
+      const result = await ai.models.generateContent({
+        model: CHAT_MODEL_NAME,
+        contents: `${systemPrompt}\n\nRespond to: "${userMessage}"`,
+      });
+      const finalReply = result.text.trim();
+      chatHistory.push(`Assassin AI: ${finalReply}`);
+      return res.json({ reply: finalReply, source: "Gemini (Tier 1)" });
+    } catch (err) {
+      console.warn(`[GEMINI FAILED] ${err.message}.`);
+      if (userPreference === "gemini") {
+        return res.json({
+          reply: `[Gemini Error] Quota exhausted or API unavailable.`,
+          source: "System Error",
+        });
+      }
+    }
   }
 
   // ==========================================
-  // TIER 2: GROQ (Free Cloud Open-Source)
+  // TIER 2: GROQ
   // ==========================================
-  try {
-    if (!process.env.GROQ_API_KEY) throw new Error("No Groq key found");
+  if (userPreference === "auto" || userPreference === "groq") {
+    try {
+      if (!process.env.GROQ_API_KEY) throw new Error("No Groq key found");
 
-    const response = await fetch(
-      "https://api.groq.com/openai/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+      const response = await fetch(
+        "https://api.groq.com/openai/v1/chat/completions",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+          },
+          body: JSON.stringify({
+            model: "llama-3.1-8b-instant",
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userMessage },
+            ],
+          }),
         },
-        body: JSON.stringify({
-          model: "llama-3.1-8b-instant",
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userMessage },
-          ],
-        }),
-      },
-    );
+      );
 
-    if (!response.ok) {
-      const errorDetails = await response.text();
-      throw new Error(`Groq rejected payload: ${errorDetails}`);
+      if (!response.ok) {
+        const errorDetails = await response.text();
+        throw new Error(`Groq rejected payload: ${errorDetails}`);
+      }
+
+      const data = await response.json();
+      const finalReply = data.choices[0].message.content.trim();
+      chatHistory.push(`Assassin AI: ${finalReply}`);
+      return res.json({
+        reply: finalReply,
+        source: "Groq (Tier 2)",
+      });
+    } catch (err) {
+      console.warn(`[GROQ FAILED] ${err.message}.`);
+      if (userPreference === "groq") {
+        return res.json({
+          reply: `[Groq Error] API unavailable.`,
+          source: "System Error",
+        });
+      }
     }
-
-    const data = await response.json();
-    const finalReply = data.choices[0].message.content.trim();
-    chatHistory.push(`Assassin AI: ${finalReply}`);
-    return res.json({
-      reply: finalReply,
-      source: "Groq (Tier 2)",
-    });
-  } catch (err) {
-    console.warn(`[GROQ FAILED] ${err.message}. Routing to Tier-3 DeepSeek...`);
   }
 
   // ==========================================
-  // TIER 3: DEEPSEEK (Open-Source / Cost-Effective)
+  // TIER 3: DEEPSEEK
   // ==========================================
-  try {
-    if (!process.env.DEEPSEEK_API_KEY) throw new Error("No DeepSeek key found");
+  if (userPreference === "auto" || userPreference === "deepseek") {
+    try {
+      if (!process.env.DEEPSEEK_API_KEY)
+        throw new Error("No DeepSeek key found");
 
-    const response = await fetch("https://api.deepseek.com/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: "deepseek-chat",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userMessage },
-        ],
-      }),
-    });
+      const response = await fetch(
+        "https://api.deepseek.com/chat/completions",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+          },
+          body: JSON.stringify({
+            model: "deepseek-chat",
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userMessage },
+            ],
+          }),
+        },
+      );
 
-    if (!response.ok) {
-      const errorDetails = await response.text();
-      throw new Error(`DeepSeek rejected payload: ${errorDetails}`);
+      if (!response.ok) {
+        const errorDetails = await response.text();
+        throw new Error(`DeepSeek rejected payload: ${errorDetails}`);
+      }
+
+      const data = await response.json();
+      const finalReply = data.choices[0].message.content.trim();
+      chatHistory.push(`Assassin AI: ${finalReply}`);
+      return res.json({ reply: finalReply, source: "DeepSeek (Tier 3)" });
+    } catch (err) {
+      console.warn(`[DEEPSEEK FAILED] ${err.message}.`);
+      if (userPreference === "deepseek") {
+        return res.json({
+          reply: `[DeepSeek Error] API unavailable.`,
+          source: "System Error",
+        });
+      }
     }
-
-    const data = await response.json();
-    const finalReply = data.choices[0].message.content.trim();
-    chatHistory.push(`Assassin AI: ${finalReply}`);
-    return res.json({ reply: finalReply, source: "DeepSeek (Tier 3)" });
-  } catch (err) {
-    console.warn(
-      `[DEEPSEEK FAILED] ${err.message}. Routing to Tier-4 Local Heuristics Engine.`,
-    );
   }
 
   // ==========================================
