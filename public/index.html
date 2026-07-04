@@ -1452,10 +1452,10 @@
                             </div>
                             <div id="${sanitizeId}">
                                 <div class="action-bar">
-                                    <button onclick="initiateLifecycle('${sanitizeId}', 'KEEP', '${item.resource_name}', 'resource')">Keep</button>
-                                    <button onclick="initiateLifecycle('${sanitizeId}', 'UPDATE', '${item.resource_name}', 'resource')">Update</button>
-                                    <button onclick="initiateLifecycle('${sanitizeId}', 'QUARANTINE', '${item.resource_name}', 'resource')">Quarantine</button>
-                                    <button class="btn-terminate" style="width:100%; margin-top:4px;" onclick="initiateLifecycle('${sanitizeId}', 'TERMINATE', '${item.resource_name}', 'resource')">Terminate</button>
+                                    <button onclick="initiateLifecycle('${sanitizeId}', 'KEEP', ${item.id}, 'resource')">Keep</button>
+                                    <button onclick="initiateLifecycle('${sanitizeId}', 'UPDATE', ${item.id}, 'resource')">Update</button>
+                                    <button onclick="initiateLifecycle('${sanitizeId}', 'QUARANTINE', ${item.id}, 'resource')">Quarantine</button>
+                                    <button class="btn-terminate" style="width:100%; margin-top:4px;" onclick="initiateLifecycle('${sanitizeId}', 'TERMINATE', ${item.id}, 'resource')">Terminate</button>
                                 </div>
                             </div>
                         </div>`;
@@ -1479,7 +1479,7 @@
 
             async function executeSecurityAction(
                 actionType,
-                resourceName,
+                resourceId,
                 silentPreFlight = false,
             ) {
                 try {
@@ -1488,7 +1488,7 @@
                         headers: getAuthHeaders(),
                         body: JSON.stringify({
                             actionType,
-                            resource_name: resourceName,
+                            resource_id: resourceId,
                         }),
                     });
                     const data = await response.json();

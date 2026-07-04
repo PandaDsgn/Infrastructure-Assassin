@@ -190,14 +190,20 @@ function resolveTargetStatus(actionType) {
 }
 
 app.post("/api/action", authenticateUser, async (req, res) => {
-  const { actionType, resource_name } = req.body;
+  const { actionType, resource_id } = req.body;
 
   const { rows } = await pgDb.query(
-    "SELECT status FROM resources WHERE resource_name = $1",
-    [resource_name],
+    "SELECT status, resource_name FROM resources WHERE id = $1",
+    [resource_id],
   );
 
-  if (rows[0] && rows[0].status === "Pending Approval") {
+  if (rows.length === 0) {
+    return res.status(404).json({ error: "Resource not found." });
+  }
+
+  const resource_name = rows[0].resource_name;
+
+  if (rows[0].status === "Pending Approval") {
     return res.status(409).json({ error: "Request already in progress." });
   }
 
@@ -211,8 +217,8 @@ app.post("/api/action", authenticateUser, async (req, res) => {
       const logId = logResult.rows[0].id;
 
       await pgDb.query(
-        "UPDATE resources SET status = 'Pending Approval', pending_action_by = $1, pending_action_type = $2, pending_log_id = $3 WHERE resource_name = $4",
-        [req.user.name, actionType, logId, resource_name],
+        "UPDATE resources SET status = 'Pending Approval', pending_action_by = $1, pending_action_type = $2, pending_log_id = $3 WHERE id = $4",
+        [req.user.name, actionType, logId, resource_id],
       );
 
       cachedAuditResults = null;
@@ -234,8 +240,8 @@ app.post("/api/action", authenticateUser, async (req, res) => {
     let targetStatus = resolveTargetStatus(actionType);
 
     await pgDb.query(
-      "UPDATE resources SET status = $1, pending_action_by = NULL, pending_action_type = NULL WHERE resource_name = $2",
-      [targetStatus, resource_name],
+      "UPDATE resources SET status = $1, pending_action_by = NULL, pending_action_type = NULL WHERE id = $2",
+      [targetStatus, resource_id],
     );
 
     cachedAuditResults = null;
@@ -258,17 +264,23 @@ app.post("/api/action", authenticateUser, async (req, res) => {
 });
 
 app.post("/api/action/cancel-request", authenticateUser, async (req, res) => {
-  const { resource_name } = req.body;
+  const { resource_id } = req.body;
   try {
     const { rows } = await pgDb.query(
-      "SELECT pending_log_id FROM resources WHERE resource_name = $1",
-      [resource_name],
+      "SELECT pending_log_id, resource_name FROM resources WHERE id = $1",
+      [resource_id],
     );
-    const logId = rows[0] && rows[0].pending_log_id;
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: "Resource not found." });
+    }
+
+    const logId = rows[0].pending_log_id;
+    const resource_name = rows[0].resource_name;
 
     await pgDb.query(
-      "UPDATE resources SET status = 'Active', pending_action_by = NULL, pending_action_type = NULL, pending_log_id = NULL WHERE resource_name = $1",
-      [resource_name],
+      "UPDATE resources SET status = 'Active', pending_action_by = NULL, pending_action_type = NULL, pending_log_id = NULL WHERE id = $1",
+      [resource_id],
     );
 
     if (logId) {
