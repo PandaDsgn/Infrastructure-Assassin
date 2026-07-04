@@ -11,6 +11,17 @@ const MODEL_NAME = "gemini-2.5-flash";
 
 const DEV_SANDBOX_MODE = false;
 
+function computeGuaranteedAnswer(resource) {
+  const isIdle = resource.days_since_last_login >= 30 ? "YES" : "NO";
+  const isMalicious = resource.is_malicious ? "YES" : "NO";
+  const needsUpdate = resource.needs_update ? "YES" : "NO";
+
+  if (isMalicious === "YES") return "QUARANTINE";
+  if (isIdle === "YES") return "TERMINATE";
+  if (needsUpdate === "YES") return "UPDATE";
+  return "KEEP";
+}
+
 async function evaluateResource(resource) {
   // 1. Analyze the resource status locally
   const isIdle = resource.days_since_last_login >= 30 ? "YES" : "NO";
@@ -18,10 +29,7 @@ async function evaluateResource(resource) {
   const needsUpdate = resource.needs_update ? "YES" : "NO";
 
   // 2. THE HACKATHON SAFETY NET: Calculate the correct answer locally
-  let guaranteedAnswer = "KEEP";
-  if (isMalicious === "YES") guaranteedAnswer = "QUARANTINE";
-  else if (isIdle === "YES") guaranteedAnswer = "TERMINATE";
-  else if (needsUpdate === "YES") guaranteedAnswer = "UPDATE";
+  let guaranteedAnswer = computeGuaranteedAnswer(resource);
 
   // Sandbox short-circuit
   if (DEV_SANDBOX_MODE) {
@@ -42,7 +50,8 @@ async function evaluateResource(resource) {
     `;
 
   try {
-    // ⚡ THE GEMINI CLOUD PIPELINE ⚡
+    // ⚡ TIER 1: GEMINI CLOUD PIPELINE ⚡
+    if (!process.env.GEMINI_API_KEY) throw new Error("No Gemini key found");
     const result = await ai.models.generateContent({
       model: MODEL_NAME,
       contents: prompt,
@@ -56,29 +65,45 @@ async function evaluateResource(resource) {
     return guaranteedAnswer;
   } catch (error) {
     console.log(
-      `[GEMINI API ERROR] Request failed: ${error.message}. Dropping to safe defaults.`,
+      `[GEMINI API ERROR] Single audit failed: ${error.message}. Routing to Groq...`,
     );
-    return guaranteedAnswer;
+
+    // ⚡ TIER 2: GROQ FALLBACK ⚡
+    try {
+      if (!process.env.GROQ_API_KEY) throw new Error("No Groq key found");
+      const response = await fetch(
+        "https://api.groq.com/openai/v1/chat/completions",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+          },
+          body: JSON.stringify({
+            model: "llama-3.1-8b-instant",
+            messages: [{ role: "user", content: prompt }],
+          }),
+        },
+      );
+
+      if (!response.ok) throw new Error(`Groq HTTP Error: ${response.status}`);
+      const data = await response.json();
+      const rawResponse = data.choices[0].message.content.toUpperCase();
+
+      if (rawResponse.includes("QUARANTINE")) return "QUARANTINE";
+      if (rawResponse.includes("TERMINATE")) return "TERMINATE";
+      if (rawResponse.includes("UPDATE")) return "UPDATE";
+
+      return guaranteedAnswer;
+    } catch (groqError) {
+      console.log(
+        `[GROQ API ERROR] Single audit failed: ${groqError.message}. Dropping to safe defaults.`,
+      );
+      return guaranteedAnswer;
+    }
   }
 }
 
-function computeGuaranteedAnswer(resource) {
-  const isIdle = resource.days_since_last_login >= 30 ? "YES" : "NO";
-  const isMalicious = resource.is_malicious ? "YES" : "NO";
-  const needsUpdate = resource.needs_update ? "YES" : "NO";
-
-  if (isMalicious === "YES") return "QUARANTINE";
-  if (isIdle === "YES") return "TERMINATE";
-  if (needsUpdate === "YES") return "UPDATE";
-  return "KEEP";
-}
-
-// Scores every resource in ONE Gemini call instead of one call per resource.
-// The Gemini free tier caps out at 20 requests/day/model - looping
-// evaluateResource() per row burns through that in a single audit refresh
-// once there's more than a handful of resources. Since the correct answer
-// is fully deterministic anyway (see computeGuaranteedAnswer), Gemini here
-// is just a rubber stamp, so there's no reason to spend N calls on it.
 async function evaluateResourcesBatch(resources) {
   const guaranteedAnswers = resources.map(computeGuaranteedAnswer);
 
@@ -111,6 +136,8 @@ async function evaluateResourcesBatch(resources) {
     `;
 
   try {
+    // ⚡ TIER 1: GEMINI ⚡
+    if (!process.env.GEMINI_API_KEY) throw new Error("No Gemini key found");
     const result = await ai.models.generateContent({
       model: MODEL_NAME,
       contents: prompt,
@@ -129,9 +156,47 @@ async function evaluateResourcesBatch(resources) {
     return finalAnswers;
   } catch (error) {
     console.log(
-      `[GEMINI API ERROR] Batch audit request failed: ${error.message}. Dropping to safe defaults.`,
+      `[GEMINI API ERROR] Batch audit failed: ${error.message}. Routing to Groq...`,
     );
-    return guaranteedAnswers;
+
+    // ⚡ TIER 2: GROQ FALLBACK ⚡
+    try {
+      if (!process.env.GROQ_API_KEY) throw new Error("No Groq key found");
+      const response = await fetch(
+        "https://api.groq.com/openai/v1/chat/completions",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+          },
+          body: JSON.stringify({
+            model: "llama-3.1-8b-instant",
+            messages: [{ role: "user", content: prompt }],
+          }),
+        },
+      );
+
+      if (!response.ok) throw new Error(`Groq HTTP Error: ${response.status}`);
+      const data = await response.json();
+      const rawResponse = data.choices[0].message.content.toUpperCase();
+
+      const finalAnswers = [...guaranteedAnswers];
+      const lineRegex = /(\d+)\s*[:\-]\s*(QUARANTINE|TERMINATE|UPDATE|KEEP)/g;
+      let match;
+      while ((match = lineRegex.exec(rawResponse)) !== null) {
+        const idx = parseInt(match[1], 10);
+        if (idx >= 0 && idx < finalAnswers.length) {
+          finalAnswers[idx] = match[2];
+        }
+      }
+      return finalAnswers;
+    } catch (groqError) {
+      console.log(
+        `[GROQ API ERROR] Batch audit request failed: ${groqError.message}. Dropping to safe defaults.`,
+      );
+      return guaranteedAnswers;
+    }
   }
 }
 

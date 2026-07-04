@@ -536,7 +536,6 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
   try {
     if (!process.env.GROQ_API_KEY) throw new Error("No Groq key found");
 
-    // Groq's API is 100% compatible with the OpenAI format, making it easy to fetch
     const response = await fetch(
       "https://api.groq.com/openai/v1/chat/completions",
       {
@@ -546,7 +545,7 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
           Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
         },
         body: JSON.stringify({
-          model: "llama3-8b-8192", // Fast, highly capable, and free on Groq
+          model: "llama-3.1-8b-instant", // Updated to the currently active Groq model
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: userMessage },
@@ -554,14 +553,19 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
         }),
       },
     );
-    if (!response.ok) throw new Error(`Groq HTTP Error: ${response.status}`);
+
+    // Extract the exact error text from Groq instead of just the status code
+    if (!response.ok) {
+      const errorDetails = await response.text();
+      throw new Error(`Groq rejected payload: ${errorDetails}`);
+    }
 
     const data = await response.json();
     const finalReply = data.choices[0].message.content.trim();
     chatHistory.push(`Assassin AI: ${finalReply}`);
     // Still passing "gemini" source so your frontend dot stays green
     return res.json({
-      reply: `[Fallback: Llama 3] ${finalReply}`,
+      reply: `[Fallback: Llama 3.1] ${finalReply}`,
       source: "gemini",
     });
   } catch (err) {
