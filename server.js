@@ -492,7 +492,7 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
   chatHistory.push(`User: ${userMessage}`);
   if (chatHistory.length > 6) chatHistory.shift();
 
-  // 1. Fetch DB state for BOTH Gemini and the local fallback
+  // Fetch DB state for the AIs
   let rows = [];
   try {
     const dbResult = await pgDb.query("SELECT * FROM resources");
@@ -503,8 +503,8 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
       .json({ error: "Failed to read database for context." });
   }
 
-  try {
-    const prompt = `You are "Infrastructure Assassin", an enterprise IT security AI.
+  // Unified System Prompt
+  const systemPrompt = `You are "Infrastructure Assassin", an enterprise IT security AI.
         Talking to ${req.user.name} (Role: ${req.user.role}).
         Infrastructure Data: ${JSON.stringify(rows)}
         Recent Context: ${chatHistory.join("\n")}
@@ -512,103 +512,137 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
         RULES:
         1. Never execute actions.
         2. Tell the user to use dashboard buttons.
-        3. If Junior-Developer, remind them it requires approval.
+        3. If Junior-Developer, remind them it requires approval.`;
 
-        Respond to: "${userMessage}"`;
-
+  // ==========================================
+  // TIER 1: GEMINI (Primary)
+  // ==========================================
+  try {
+    if (!process.env.GEMINI_API_KEY) throw new Error("No Gemini key found");
     const result = await ai.models.generateContent({
       model: CHAT_MODEL_NAME,
-      contents: prompt,
+      contents: `${systemPrompt}\n\nRespond to: "${userMessage}"`,
     });
     const finalReply = result.text.trim();
-
     chatHistory.push(`Assassin AI: ${finalReply}`);
     return res.json({ reply: finalReply, source: "gemini" });
-  } catch (error) {
-    console.error(
-      `[GEMINI UNAVAILABLE] ${error.message || error} - Routing to Tier-2 Local Heuristics Engine.`,
-    );
-
-    // --- UPGRADED LOCAL FALLBACK ENGINE ---
-
-    const msg = userMessage.toLowerCase();
-    let localReply = "";
-
-    // Calculate dynamic savings
-    let dynamicSavings = 0;
-    rows.forEach((r) => {
-      if (
-        (r.status === "Active" || r.status === "Pending Approval") &&
-        (r.days_since_last_login >= 30 || r.is_malicious)
-      ) {
-        dynamicSavings += Number(r.monthly_cost) || 0;
-      }
-    });
-
-    // 1. Check if the user is asking about a SPECIFIC resource dynamically
-    // We split by spaces to try and catch partial names (e.g., "runner" for "Gitlab Runner")
-    const words = msg.split(/\s+/).filter((w) => w.length > 2);
-    const mentionedResource = rows.find((r) =>
-      words.some((word) => r.resource_name.toLowerCase().includes(word)),
-    );
-
-    // 2. Intent recognition flags
-    // 2. Intent recognition flags (Updated to catch stems and typos)
-    const isAskingCost = msg.match(/(cost|spend|sav|money|budget|summary)/);
-    const isAskingTerminate = msg.match(
-      /(terminat|delete|remove|kill|idle|unused)/,
-    );
-    const isAskingQuarantine = msg.match(
-      /(quarantin|quanrantin|malicious|virus|malware|threat|hack)/,
-    );
-    const isAskingUpdate = msg.match(/(updat|patch|upgrad|outdated)/);
-
-    // 3. Construct intelligent response
-    if (mentionedResource) {
-      const name = mentionedResource.resource_name;
-      const cost = mentionedResource.monthly_cost;
-      const idle = mentionedResource.days_since_last_login;
-
-      if (mentionedResource.is_malicious) {
-        localReply = `CRITICAL ALERT: ${name} is flagged as malicious. Immediate QUARANTINE recommended. (Cost: ₹${cost}/mo)`;
-      } else if (idle >= 30) {
-        localReply = `${name} should be TERMINATED. It costs ₹${cost}/mo and has been idle for ${idle} days.`;
-      } else if (mentionedResource.needs_update) {
-        localReply = `${name} requires a critical security patch. Recommendation: UPDATE.`;
-      } else {
-        localReply = `${name} is secure and active (Idle: ${idle} days). Recommendation: KEEP.`;
-      }
-    } else if (isAskingQuarantine) {
-      const targets = rows
-        .filter((r) => r.is_malicious)
-        .map((r) => r.resource_name);
-      localReply = targets.length
-        ? `URGENT: The following resources are malicious and must be QUARANTINED: ${targets.join(", ")}.`
-        : `No active malicious threats detected.`;
-    } else if (isAskingTerminate) {
-      const targets = rows
-        .filter((r) => !r.is_malicious && r.days_since_last_login >= 30)
-        .map((r) => r.resource_name);
-      localReply = targets.length
-        ? `Based on telemetry, these idle resources should be TERMINATED: ${targets.join(", ")}.`
-        : `No resources are currently flagged for termination based on idle time.`;
-    } else if (isAskingUpdate) {
-      const targets = rows
-        .filter((r) => r.needs_update && !r.is_malicious)
-        .map((r) => r.resource_name);
-      localReply = targets.length
-        ? `These resources require critical patches (UPDATE): ${targets.join(", ")}.`
-        : `All active applications are up to date.`;
-    } else if (isAskingCost) {
-      localReply = `Local metrics report: You have ₹${dynamicSavings.toLocaleString("en-IN")} in potential savings identified. Focus on Quarantining malicious apps and Terminating idle resources to realize this.`;
-    } else {
-      // Default help fallback
-      localReply = `Neural Link offline. I am operating on local heuristics. You can ask me about costs, threats (quarantine), idle resources (terminate), or type the name of a specific application in the ledger.`;
-    }
-
-    chatHistory.push(`Assassin AI: ${localReply}`);
-    return res.json({ reply: localReply, source: "local-fallback" });
+  } catch (err) {
+    console.warn(`[GEMINI FAILED] ${err.message}. Falling back to Groq...`);
   }
+
+  // ==========================================
+  // TIER 2: GROQ (Free Cloud Open-Source)
+  // ==========================================
+  try {
+    if (!process.env.GROQ_API_KEY) throw new Error("No Groq key found");
+
+    // Groq's API is 100% compatible with the OpenAI format, making it easy to fetch
+    const response = await fetch(
+      "https://api.groq.com/openai/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "llama3-8b-8192", // Fast, highly capable, and free on Groq
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userMessage },
+          ],
+        }),
+      },
+    );
+    if (!response.ok) throw new Error(`Groq HTTP Error: ${response.status}`);
+
+    const data = await response.json();
+    const finalReply = data.choices[0].message.content.trim();
+    chatHistory.push(`Assassin AI: ${finalReply}`);
+    // Still passing "gemini" source so your frontend dot stays green
+    return res.json({
+      reply: `[Fallback: Llama 3] ${finalReply}`,
+      source: "gemini",
+    });
+  } catch (err) {
+    console.warn(
+      `[GROQ FAILED] ${err.message}. Routing to Tier-3 Local Heuristics Engine.`,
+    );
+  }
+
+  // ==========================================
+  // TIER 3: LOCAL HEURISTICS ENGINE (No API required)
+  // ==========================================
+  const msg = userMessage.toLowerCase();
+  let localReply = "";
+  let dynamicSavings = 0;
+
+  rows.forEach((r) => {
+    if (
+      (r.status === "Active" || r.status === "Pending Approval") &&
+      (r.days_since_last_login >= 30 || r.is_malicious)
+    ) {
+      dynamicSavings += Number(r.monthly_cost) || 0;
+    }
+  });
+
+  const words = msg.split(/\s+/).filter((w) => w.length > 2);
+  const mentionedResource = rows.find((r) =>
+    words.some((word) => r.resource_name.toLowerCase().includes(word)),
+  );
+
+  const isAskingCost = msg.match(/(cost|spend|sav|money|budget|summary)/);
+  const isAskingTerminate = msg.match(
+    /(terminat|delete|remove|kill|idle|unused)/,
+  );
+  const isAskingQuarantine = msg.match(
+    /(quarantin|quanrantin|malicious|virus|malware|threat|hack)/,
+  );
+  const isAskingUpdate = msg.match(/(updat|patch|upgrad|outdated)/);
+
+  if (mentionedResource) {
+    const name = mentionedResource.resource_name;
+    const cost = mentionedResource.monthly_cost;
+    const idle = mentionedResource.days_since_last_login;
+
+    if (mentionedResource.is_malicious) {
+      localReply = `CRITICAL ALERT: ${name} is flagged as malicious. Immediate QUARANTINE recommended. (Cost: ₹${cost}/mo)`;
+    } else if (idle >= 30) {
+      localReply = `${name} should be TERMINATED. It costs ₹${cost}/mo and has been idle for ${idle} days.`;
+    } else if (mentionedResource.needs_update) {
+      localReply = `${name} requires a critical security patch. Recommendation: UPDATE.`;
+    } else {
+      localReply = `${name} is secure and active (Idle: ${idle} days). Recommendation: KEEP.`;
+    }
+  } else if (isAskingQuarantine) {
+    const targets = rows
+      .filter((r) => r.is_malicious)
+      .map((r) => r.resource_name);
+    localReply = targets.length
+      ? `URGENT: The following resources are malicious and must be QUARANTINED: ${targets.join(", ")}.`
+      : `No active malicious threats detected.`;
+  } else if (isAskingTerminate) {
+    const targets = rows
+      .filter((r) => !r.is_malicious && r.days_since_last_login >= 30)
+      .map((r) => r.resource_name);
+    localReply = targets.length
+      ? `Based on telemetry, these idle resources should be TERMINATED: ${targets.join(", ")}.`
+      : `No resources are currently flagged for termination based on idle time.`;
+  } else if (isAskingUpdate) {
+    const targets = rows
+      .filter((r) => r.needs_update && !r.is_malicious)
+      .map((r) => r.resource_name);
+    localReply = targets.length
+      ? `These resources require critical patches (UPDATE): ${targets.join(", ")}.`
+      : `All active applications are up to date.`;
+  } else if (isAskingCost) {
+    localReply = `Local metrics report: You have ₹${dynamicSavings.toLocaleString("en-IN")} in potential savings identified. Focus on Quarantining malicious apps and Terminating idle resources to realize this.`;
+  } else {
+    localReply = `Neural Link offline. I am operating on local heuristics. You can ask me about costs, threats (quarantine), idle resources (terminate), or type the name of a specific application in the ledger.`;
+  }
+
+  chatHistory.push(`Assassin AI: ${localReply}`);
+  return res.json({ reply: localReply, source: "local-fallback" });
 });
 
 const PORT = process.env.PORT || 3000;
