@@ -1264,6 +1264,7 @@
                     .signOut()
                     .then(() => {
                         sessionStorage.removeItem("aegis_token");
+                        isAppMounted = false;
                         document.getElementById("main-app").style.display =
                             "none";
                         document.getElementById("sso-screen").style.display =
@@ -1829,8 +1830,10 @@
                 startRealtimeSync();
             }
 
+            let isAppMounted = false;
+
             window.firebaseReady.then(() => {
-                firebase.auth().onAuthStateChanged(async (user) => {
+                firebase.auth().onIdTokenChanged(async (user) => {
                     if (skipNextAuthRestore) {
                         skipNextAuthRestore = false;
                         return;
@@ -1838,13 +1841,18 @@
 
                     if (!user) {
                         sessionStorage.removeItem("aegis_token");
+                        isAppMounted = false;
                         return;
                     }
 
                     try {
                         const idToken = await user.getIdToken();
                         sessionStorage.setItem("aegis_token", idToken);
-                        await mountDashboard();
+
+                        if (!isAppMounted) {
+                            await mountDashboard();
+                            isAppMounted = true;
+                        }
                     } catch (error) {
                         console.error(
                             "Failed to restore session on refresh:",
