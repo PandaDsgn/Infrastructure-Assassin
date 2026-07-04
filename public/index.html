@@ -54,17 +54,17 @@
                 background-color: var(--bg-color);
                 color: var(--text-main);
                 font-family: var(--sans);
-                padding: 56px;
-                padding-right: 420px;
+                /* Padding left reserves space for the open side-panel */
+                padding: 56px 56px 56px 420px;
                 margin: 0;
                 min-height: 100vh;
                 transition:
                     background-color 0.3s ease,
                     color 0.3s ease,
-                    padding-right 0.3s ease;
+                    padding-left 0.3s ease;
             }
             body.chat-collapsed {
-                padding-right: 56px;
+                padding-left: 100px;
             }
             header {
                 display: flex;
@@ -443,11 +443,43 @@
             [data-theme="dark"] .btn-reject:hover {
                 color: #241414;
             }
+
+            /* --- CHAT WIDGET & TOGGLE BUTTON --- */
+            .agent-open-btn {
+                position: fixed;
+                top: 40px;
+                left: 0;
+                background: var(--card-bg);
+                color: var(--text-main);
+                border: 1px solid var(--border-color);
+                border-left: none; /* Flush with edge */
+                padding: 12px 18px 12px 14px;
+                border-radius: 0 12px 12px 0;
+                font-family: var(--serif);
+                font-weight: 600;
+                font-size: 0.95rem;
+                cursor: pointer;
+                box-shadow: 4px 4px 15px rgba(var(--shadow-rgb), 0.05);
+                z-index: 999;
+                transition:
+                    transform 0.3s ease,
+                    color 0.2s ease;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            .agent-open-btn:hover {
+                color: var(--primary);
+            }
+            body:not(.chat-collapsed) .agent-open-btn {
+                transform: translateX(-100%);
+            }
+
             #chat-widget {
                 position: fixed;
                 top: 40px;
                 bottom: 40px;
-                right: 40px;
+                left: 40px;
                 width: 340px;
                 background: var(--card-bg);
                 border: 1px solid var(--border-color);
@@ -458,18 +490,17 @@
                 overflow: hidden;
                 z-index: 1000;
                 transition:
-                    width 0.3s ease,
-                    bottom 0.3s ease;
+                    transform 0.3s ease,
+                    opacity 0.3s ease;
+                transform: translateX(0);
+                opacity: 1;
             }
             #chat-widget.collapsed {
-                bottom: auto;
-                width: 240px;
-                cursor: pointer;
+                transform: translateX(calc(-100% - 40px));
+                opacity: 0;
+                pointer-events: none;
             }
-            #chat-widget.collapsed #chat-history,
-            #chat-widget.collapsed #chat-input-area {
-                display: none;
-            }
+
             #chat-header {
                 background: var(--card-bg);
                 color: var(--text-main);
@@ -483,15 +514,12 @@
                 align-items: center;
                 border-bottom: 1px solid var(--border-color);
             }
-            #chat-widget.collapsed #chat-header {
-                border-bottom: none;
-            }
             .chat-toggle-btn {
                 background: transparent;
                 border: none;
                 color: var(--text-muted);
                 font-family: var(--sans);
-                font-size: 1rem;
+                font-size: 1.2rem;
                 line-height: 1;
                 padding: 2px 6px;
                 flex: none;
@@ -846,6 +874,11 @@
         </div>
 
         <div id="main-app">
+            <!-- New Floating Agent Toggle Button -->
+            <button class="agent-open-btn" onclick="toggleChatCollapse()">
+                💬 Agent
+            </button>
+
             <header>
                 <div>
                     <h1>Infrastructure Assassin</h1>
@@ -942,17 +975,7 @@
             <div id="results" class="dashboard"></div>
 
             <div id="chat-widget">
-                <div
-                    id="chat-header"
-                    onclick="
-                        if (
-                            document
-                                .getElementById('chat-widget')
-                                .classList.contains('collapsed')
-                        )
-                            toggleChatCollapse();
-                    "
-                >
+                <div id="chat-header">
                     <span>Agent Chat Interface</span>
                     <div style="display: flex; align-items: center; gap: 10px">
                         <span
@@ -967,13 +990,10 @@
                         <button
                             class="chat-toggle-btn"
                             id="chat-collapse-btn"
-                            title="Collapse chat"
-                            onclick="
-                                event.stopPropagation();
-                                toggleChatCollapse();
-                            "
+                            title="Close chat"
+                            onclick="toggleChatCollapse()"
                         >
-                            &minus;
+                            &times;
                         </button>
                     </div>
                 </div>
@@ -1121,11 +1141,8 @@
 
             function toggleChatCollapse() {
                 const widget = document.getElementById("chat-widget");
-                const btn = document.getElementById("chat-collapse-btn");
                 const collapsed = widget.classList.toggle("collapsed");
                 document.body.classList.toggle("chat-collapsed", collapsed);
-                btn.innerHTML = collapsed ? "&#43;" : "&minus;";
-                btn.title = collapsed ? "Expand chat" : "Collapse chat";
                 localStorage.setItem("chatCollapsed", collapsed ? "1" : "0");
             }
             if (localStorage.getItem("chatCollapsed") === "1") {
@@ -1133,10 +1150,6 @@
                     .getElementById("chat-widget")
                     .classList.add("collapsed");
                 document.body.classList.add("chat-collapsed");
-                const collapseBtn =
-                    document.getElementById("chat-collapse-btn");
-                collapseBtn.innerHTML = "&#43;";
-                collapseBtn.title = "Expand chat";
             }
 
             function getAuthHeaders() {
