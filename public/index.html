@@ -1086,8 +1086,17 @@
 
                 eventSource.onerror = () => {
                     console.warn(
-                        "Real-time stream interrupted - browser will auto-reconnect.",
+                        "Real-time stream interrupted. Reconnecting with fresh credentials...",
                     );
+
+                    eventSource.close();
+                    eventSource = null;
+
+                    setTimeout(() => {
+                        if (sessionStorage.getItem("aegis_token")) {
+                            startRealtimeSync();
+                        }
+                    }, 3000);
                 };
             }
 
