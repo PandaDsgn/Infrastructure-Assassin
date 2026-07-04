@@ -691,5 +691,9 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
   return res.json({ reply: localReply, source: "Heuristics (Tier 4)" });
 });
 
+app.get("/api/chat/history", authenticateUser, (req, res) => {
+  res.json(chatHistories[req.user.uid] || []);
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🔥 BACKEND LIVE ON PORT ${PORT}`));

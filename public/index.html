@@ -1225,8 +1225,21 @@
                 }
             }
 
-            function handleLogout() {
+            async function handleLogout() {
                 stopRealtimeSync();
+
+                try {
+                    await fetch("/api/chat/clear", {
+                        method: "POST",
+                        headers: getAuthHeaders(),
+                    });
+                } catch (err) {
+                    console.error(
+                        "Failed to clear chat history on logout:",
+                        err,
+                    );
+                }
+
                 firebase
                     .auth()
                     .signOut()
@@ -1237,6 +1250,13 @@
                         document.getElementById("sso-screen").style.display =
                             "flex";
                         document.getElementById("results").innerHTML = "";
+
+                        document.getElementById("chat-history").innerHTML = `
+                            <div class="msg msg-ai">
+                                Hello. I am the Infrastructure Assassin AI. How can I
+                                assist you with today's audit?
+                            </div>`;
+
                         currentAuditHash = "";
                         currentInboxHash = "";
                         currentOutgoingHash = "";
@@ -1771,6 +1791,27 @@
                     userData.role;
                 document.getElementById("sso-screen").style.display = "none";
                 document.getElementById("main-app").style.display = "block";
+
+                // --- New: Load user-specific chat history ---
+                const historyRes = await fetch("/api/chat/history", {
+                    headers: getAuthHeaders(),
+                });
+                if (historyRes.ok) {
+                    const history = await historyRes.json();
+                    const chatContainer =
+                        document.getElementById("chat-history");
+
+                    // Populate history if messages exist
+                    if (history.length > 0) {
+                        chatContainer.innerHTML = history
+                            .map((msg) => {
+                                const isUser = msg.startsWith("User:");
+                                return `<div class="msg ${isUser ? "msg-user" : "msg-ai"}">${msg.replace(/^(User:|Assassin AI:)/, "")}</div>`;
+                            })
+                            .join("");
+                        chatContainer.scrollTop = chatContainer.scrollHeight;
+                    }
+                }
 
                 if (userData.role === "IT-Director") {
                     document.getElementById("admin-panel").style.display =
