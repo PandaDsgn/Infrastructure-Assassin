@@ -47,9 +47,6 @@ async function authenticateUser(req, res, next) {
   if (authHeader && authHeader.startsWith("Bearer ")) {
     token = authHeader.split(" ")[1];
   } else if (req.query && req.query.token) {
-    // Fallback for connections that can't set custom headers - specifically
-    // native EventSource (used for /api/events), which has no way to send
-    // an Authorization header. Every other route keeps using the header.
     token = req.query.token;
   }
 
@@ -85,43 +82,26 @@ function requireAdmin(req, res, next) {
 }
 
 // --- REAL-TIME EVENT STREAM (SERVER-SENT EVENTS) ---
-// Keeps a live, push-based channel open to every connected dashboard so that
-// resource/approval/personnel changes appear instantly without any client
-// having to poll or reload the page.
-let sseClients = []; // [{ uid, role, res }]
+let sseClients = [];
 
-// Pushes an already-built payload to every client connected to THIS
-// instance. This is called from two places: (1) below, kept for symmetry/
-// direct local testing, and (2) the pgDb realtime bus callback registered at
-// startup, which fires whenever ANY instance publishes an event - including
-// this one. That's what makes the broadcast reach every replica instead of
-// just whichever process happened to handle the originating request.
 function pushToLocalClients(payload) {
   const message = JSON.stringify(payload);
   sseClients.forEach((client) => {
     try {
       client.res.write(`data: ${message}\n\n`);
     } catch (err) {
-      // Dead connection - it will be cleaned up by the client's 'close' handler.
+      // Dead connection
     }
   });
 }
 
-// Fire-and-forget: publishes to Postgres NOTIFY so every instance (this one
-// included, via the LISTEN subscription below) pushes it to its local SSE
-// clients. Callers keep using broadcastEvent(type, data) exactly as before.
 function broadcastEvent(type, data = {}) {
   pgDb.publishRealtimeEvent(type, data).catch((err) => {
     console.error(`[REALTIME BUS] Failed to publish "${type}":`, err.message);
-    // Fall back to at least notifying this instance's own clients so the
-    // person who triggered the action still sees it update.
     pushToLocalClients({ type, data, timestamp: Date.now() });
   });
 }
 
-// Subscribe this instance to the shared bus. Every event published by any
-// instance (via broadcastEvent -> publishRealtimeEvent) arrives here and
-// gets fanned out to whatever SSE clients happen to be connected locally.
 pgDb.initRealtimeBus(pushToLocalClients).catch((err) => {
   console.error("[REALTIME BUS] Failed to initialize:", err.message);
 });
@@ -131,7 +111,7 @@ app.get("/api/events", authenticateUser, (req, res) => {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache, no-transform",
     Connection: "keep-alive",
-    "X-Accel-Buffering": "no", // Disable buffering on reverse proxies (e.g. nginx)
+    "X-Accel-Buffering": "no",
   });
   res.flushHeaders();
   res.write(": connected\n\n");
@@ -139,7 +119,6 @@ app.get("/api/events", authenticateUser, (req, res) => {
   const client = { uid: req.user.uid, role: req.user.role, res };
   sseClients.push(client);
 
-  // Heartbeat prevents idle-timeout disconnects on load balancers/proxies.
   const heartbeat = setInterval(() => {
     try {
       res.write(": heartbeat\n\n");
@@ -197,7 +176,6 @@ app.get("/api/audit", authenticateUser, async (req, res) => {
       "SELECT * FROM resources WHERE status = 'Active' OR status = 'Pending Approval'",
     );
 
-    // ONE Gemini call for the whole batch, not one per row - see agent.js.
     const actions = await evaluateResourcesBatch(rows);
     const auditedResources = rows.map((row, i) => ({
       ...row,
@@ -213,10 +191,6 @@ app.get("/api/audit", authenticateUser, async (req, res) => {
 });
 
 // --- RBAC ACTION & APPROVAL ROUTES ---
-
-// Single source of truth for what each action type resolves to. Used both
-// when an Admin applies an action directly and when an Admin approves a
-// Developer's pending request, so the two paths can never drift apart.
 function resolveTargetStatus(actionType) {
   if (actionType === "TERMINATE") return "Terminated";
   if (actionType === "QUARANTINE") return "Quarantined";
@@ -230,8 +204,6 @@ app.post("/api/action", authenticateUser, async (req, res) => {
 
   try {
     if (req.user.role === "Junior-Developer") {
-      // Create the permanent audit-trail row first so we have an id to
-      // link the live resource row to (see request_log in db.js).
       const logResult = await pgDb.query(
         `INSERT INTO request_log (resource_name, requester_uid, requester_name, action_type, status)
          VALUES ($1, $2, $3, $4, 'Pending') RETURNING id`,
@@ -247,8 +219,6 @@ app.post("/api/action", authenticateUser, async (req, res) => {
       cachedAuditResults = null;
       lastAuditTime = 0;
 
-      // Push this immediately to every connected dashboard (esp. Admins)
-      // so the pending request shows up in real time.
       broadcastEvent("resource_pending", {
         resource_name,
         requester: req.user.name,
@@ -288,7 +258,6 @@ app.post("/api/action", authenticateUser, async (req, res) => {
   }
 });
 
-// Route to drop a developer's request from the queue completely
 app.post("/api/action/cancel-request", authenticateUser, async (req, res) => {
   const { resource_name } = req.body;
   try {
@@ -367,8 +336,6 @@ app.post(
       let message;
 
       if (decision === "Approve") {
-        // Apply whatever the developer actually asked for - Keep, Update,
-        // Quarantine, or Terminate - not a hardcoded outcome.
         finalStatus = resolveTargetStatus(requestedAction);
         message = `Approved. ${requestedAction || "Requested action"} applied to ${rows[0].resource_name}.`;
       } else {
@@ -411,11 +378,6 @@ app.post(
   },
 );
 
-// Every request (Pending, Approved, Rejected, or Cancelled) the calling
-// user has ever sent, newest first. Backs the Developer's Outgoing Inbox -
-// unlike /api/approvals (live "Pending Approval" resources only, Admin-only),
-// this reads straight from the permanent request_log so past decisions are
-// never lost once a request is resolved.
 app.get("/api/requests/outgoing", authenticateUser, async (req, res) => {
   try {
     const { rows } = await pgDb.query(
@@ -455,11 +417,9 @@ app.delete(
   async (req, res) => {
     const { targetUid } = req.params;
     try {
-      // 1. Fetch user snapshot profile from Firestore to inspect authority rank
       const userRef = db.collection("users").doc(targetUid);
       const doc = await userRef.get();
 
-      // If the target is an IT Director, block the action completely
       if (doc.exists && doc.data().role === "IT-Director") {
         return res.status(403).json({
           error:
@@ -467,7 +427,6 @@ app.delete(
         });
       }
 
-      // 2. Fall through to clear Junior Developer instances if safe
       await auth.deleteUser(targetUid);
       await userRef.delete();
 
@@ -525,9 +484,9 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
     });
     const finalReply = result.text.trim();
     chatHistory.push(`Assassin AI: ${finalReply}`);
-    return res.json({ reply: finalReply, source: "gemini" });
+    return res.json({ reply: finalReply, source: "Gemini (Tier 1)" });
   } catch (err) {
-    console.warn(`[GEMINI FAILED] ${err.message}. Falling back to Groq...`);
+    console.warn(`[GEMINI FAILED] ${err.message}. Routing to Tier-2 Groq...`);
   }
 
   // ==========================================
@@ -545,7 +504,7 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
           Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
         },
         body: JSON.stringify({
-          model: "llama-3.1-8b-instant", // Updated to the currently active Groq model
+          model: "llama-3.1-8b-instant",
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: userMessage },
@@ -554,7 +513,6 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
       },
     );
 
-    // Extract the exact error text from Groq instead of just the status code
     if (!response.ok) {
       const errorDetails = await response.text();
       throw new Error(`Groq rejected payload: ${errorDetails}`);
@@ -563,19 +521,52 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
     const data = await response.json();
     const finalReply = data.choices[0].message.content.trim();
     chatHistory.push(`Assassin AI: ${finalReply}`);
-    // Still passing "gemini" source so your frontend dot stays green
     return res.json({
-      reply: `[Fallback: Llama 3.1] ${finalReply}`,
-      source: "gemini",
+      reply: finalReply,
+      source: "Groq (Tier 2)",
     });
   } catch (err) {
+    console.warn(`[GROQ FAILED] ${err.message}. Routing to Tier-3 DeepSeek...`);
+  }
+
+  // ==========================================
+  // TIER 3: DEEPSEEK (Open-Source / Cost-Effective)
+  // ==========================================
+  try {
+    if (!process.env.DEEPSEEK_API_KEY) throw new Error("No DeepSeek key found");
+
+    const response = await fetch("https://api.deepseek.com/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "deepseek-chat",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userMessage },
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      const errorDetails = await response.text();
+      throw new Error(`DeepSeek rejected payload: ${errorDetails}`);
+    }
+
+    const data = await response.json();
+    const finalReply = data.choices[0].message.content.trim();
+    chatHistory.push(`Assassin AI: ${finalReply}`);
+    return res.json({ reply: finalReply, source: "DeepSeek (Tier 3)" });
+  } catch (err) {
     console.warn(
-      `[GROQ FAILED] ${err.message}. Routing to Tier-3 Local Heuristics Engine.`,
+      `[DEEPSEEK FAILED] ${err.message}. Routing to Tier-4 Local Heuristics Engine.`,
     );
   }
 
   // ==========================================
-  // TIER 3: LOCAL HEURISTICS ENGINE (No API required)
+  // TIER 4: LOCAL HEURISTICS ENGINE (No API required)
   // ==========================================
   const msg = userMessage.toLowerCase();
   let localReply = "";
@@ -646,7 +637,7 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
   }
 
   chatHistory.push(`Assassin AI: ${localReply}`);
-  return res.json({ reply: localReply, source: "local-fallback" });
+  return res.json({ reply: localReply, source: "Heuristics (Tier 4)" });
 });
 
 const PORT = process.env.PORT || 3000;
