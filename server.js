@@ -713,4 +713,4 @@ app.post("/api/chat/clear", authenticateUser, (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🔥 BACKEND LIVE ON PORT ${PORT}`));
+app.listen(PORT, () => console.log(`BACKEND LIVE ON PORT ${PORT}`));

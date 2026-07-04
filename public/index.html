@@ -43,6 +43,12 @@
                 --pending: #a3cde0;
                 --shadow-rgb: 0, 0, 0;
             }
+
+            /* Inverts images when dark theme is toggled */
+            [data-theme="dark"] .theme-invert-icon {
+                filter: invert(1);
+            }
+
             * {
                 box-sizing: border-box;
             }
@@ -144,6 +150,10 @@
                 font-weight: 500;
                 flex: none;
                 transition: all 0.2s ease;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 6px;
             }
             .icon-btn:hover {
                 border-color: var(--gold);
@@ -884,7 +894,13 @@
 
         <div id="main-app">
             <button class="agent-open-btn" onclick="toggleChatCollapse()">
-                💬 Agent
+                <img
+                    src="/images/chat.png"
+                    alt="Chat"
+                    class="theme-invert-icon"
+                    style="height: 20px; width: 20px"
+                />
+                Agent
             </button>
 
             <header>
@@ -902,7 +918,12 @@
                             style="display: none"
                             onclick="openInboxModal('incoming')"
                         >
-                            📥 Incoming Inbox
+                            <img
+                                src="/images/incoming.png"
+                                alt="Incoming"
+                                class="theme-invert-icon"
+                                style="height: 18px; width: 18px"
+                            />
                             <span
                                 class="badge-dot"
                                 id="incoming-inbox-badge"
@@ -914,7 +935,12 @@
                             style="display: none"
                             onclick="openInboxModal('outgoing')"
                         >
-                            📤 Outgoing Inbox
+                            <img
+                                src="/images/outgoing.png"
+                                alt="Outgoing"
+                                class="theme-invert-icon"
+                                style="height: 18px; width: 18px"
+                            />
                             <span
                                 class="badge-dot neutral"
                                 id="outgoing-inbox-badge"
@@ -1462,7 +1488,7 @@
                         headers: getAuthHeaders(),
                         body: JSON.stringify({
                             actionType,
-                            resource_name: resourceName,
+                            resourceName: resourceName,
                         }),
                     });
                     const data = await response.json();
@@ -1795,7 +1821,7 @@
                         "block";
                     document.getElementById(
                         "incoming-inbox-btn",
-                    ).style.display = "inline-block";
+                    ).style.display = "flex";
                     document.getElementById(
                         "outgoing-inbox-btn",
                     ).style.display = "none";
@@ -1809,7 +1835,7 @@
                     ).style.display = "none";
                     document.getElementById(
                         "outgoing-inbox-btn",
-                    ).style.display = "inline-block";
+                    ).style.display = "flex";
                     loadOutgoingInbox();
                 }
 
