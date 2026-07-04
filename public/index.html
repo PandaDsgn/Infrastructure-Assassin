@@ -1271,25 +1271,18 @@
                 if (activeTimers[elementId]) return;
 
                 const container = document.getElementById(elementId);
+
                 const buttons = container.querySelectorAll("button");
                 buttons.forEach((btn) => (btn.disabled = true));
 
                 const originalHtml = container.innerHTML;
+
                 let timeLeft = 86400;
 
                 container.innerHTML = `
                     <button class="btn-undo-active" id="undo-${elementId}">⏳ Undo (${getShortTimeFormat(timeLeft)})</button>
                     <button class="btn-now-active" id="now-${elementId}">${actionType} Now</button>
                 `;
-
-                const role =
-                    document.getElementById("display-role").textContent;
-                if (
-                    role === "Junior-Developer" &&
-                    targetCategory === "resource"
-                ) {
-                    executeSecurityAction(actionType, referenceId, true);
-                }
 
                 const countdown = setInterval(async () => {
                     timeLeft--;
@@ -1302,6 +1295,7 @@
                     if (timeLeft <= 0) {
                         clearInterval(countdown);
                         delete activeTimers[elementId];
+
                         if (targetCategory === "resource") {
                             executeSecurityAction(
                                 actionType,
@@ -1322,37 +1316,24 @@
                     targetCategory,
                 };
 
-                document.getElementById(`undo-${elementId}`).onclick =
-                    async () => {
-                        clearInterval(countdown);
-                        const cacheRef = activeTimers[elementId];
-                        delete activeTimers[elementId];
-                        container.innerHTML = cacheRef.originalHtml;
+                document.getElementById(`undo-${elementId}`).onclick = () => {
+                    clearInterval(countdown);
+                    const cacheRef = activeTimers[elementId];
+                    delete activeTimers[elementId];
 
-                        if (
-                            role === "Junior-Developer" &&
-                            cacheRef.targetCategory === "resource"
-                        ) {
-                            await fetch("/api/action/cancel-request", {
-                                method: "POST",
-                                headers: getAuthHeaders(),
-                                body: JSON.stringify({
-                                    resource_name: cacheRef.referenceId,
-                                }),
-                            });
-                            alert(
-                                "Transaction dropped. Request retracted from Admin ledger.",
-                            );
-                        } else {
-                            alert("Action execution halted successfully.");
-                        }
-                        runAudit();
-                    };
+                    container.innerHTML = cacheRef.originalHtml;
+
+                    alert(
+                        "Action execution halted successfully before sending.",
+                    );
+                    runAudit();
+                };
 
                 document.getElementById(`now-${elementId}`).onclick = () => {
                     clearInterval(countdown);
                     const cacheRef = activeTimers[elementId];
                     delete activeTimers[elementId];
+
                     if (cacheRef.targetCategory === "resource") {
                         executeSecurityAction(
                             cacheRef.actionType,
