@@ -1488,7 +1488,7 @@
                         headers: getAuthHeaders(),
                         body: JSON.stringify({
                             actionType,
-                            resourceName: resourceName,
+                            resource_name: resourceName,
                         }),
                     });
                     const data = await response.json();
