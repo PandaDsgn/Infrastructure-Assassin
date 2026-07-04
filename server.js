@@ -192,6 +192,15 @@ function resolveTargetStatus(actionType) {
 app.post("/api/action", authenticateUser, async (req, res) => {
   const { actionType, resource_name } = req.body;
 
+  const { rows } = await pgDb.query(
+    "SELECT status FROM resources WHERE resource_name = $1",
+    [resource_name],
+  );
+
+  if (rows[0] && rows[0].status === "Pending Approval") {
+    return res.status(409).json({ error: "Request already in progress." });
+  }
+
   try {
     if (req.user.role === "Junior-Developer") {
       const logResult = await pgDb.query(
@@ -693,6 +702,14 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
 
 app.get("/api/chat/history", authenticateUser, (req, res) => {
   res.json(chatHistories[req.user.uid] || []);
+});
+
+app.post("/api/chat/clear", authenticateUser, (req, res) => {
+  const userId = req.user.uid;
+  if (chatHistories[userId]) {
+    delete chatHistories[userId];
+  }
+  res.json({ success: true });
 });
 
 const PORT = process.env.PORT || 3000;

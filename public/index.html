@@ -1228,17 +1228,10 @@
             async function handleLogout() {
                 stopRealtimeSync();
 
-                try {
-                    await fetch("/api/chat/clear", {
-                        method: "POST",
-                        headers: getAuthHeaders(),
-                    });
-                } catch (err) {
-                    console.error(
-                        "Failed to clear chat history on logout:",
-                        err,
-                    );
-                }
+                await fetch("/api/chat/clear", {
+                    method: "POST",
+                    headers: getAuthHeaders(),
+                });
 
                 firebase
                     .auth()
@@ -1278,6 +1271,9 @@
                 if (activeTimers[elementId]) return;
 
                 const container = document.getElementById(elementId);
+                const buttons = container.querySelectorAll("button");
+                buttons.forEach((btn) => (btn.disabled = true));
+
                 const originalHtml = container.innerHTML;
                 let timeLeft = 86400;
 
