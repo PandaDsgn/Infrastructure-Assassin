@@ -492,7 +492,7 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
   chatHistory.push(`User: ${userMessage}`);
   if (chatHistory.length > 6) chatHistory.shift();
 
-  // 1. Move the database query OUTSIDE the try block so the fallback engine can read the rows
+  // 1. Fetch DB state for BOTH Gemini and the local fallback
   let rows = [];
   try {
     const dbResult = await pgDb.query("SELECT * FROM resources");
@@ -526,58 +526,86 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
     return res.json({ reply: finalReply, source: "gemini" });
   } catch (error) {
     console.error(
-      `[GEMINI UNAVAILABLE] ${error.message || error} - Routing to Tier-2 Local NLP Engine.`,
+      `[GEMINI UNAVAILABLE] ${error.message || error} - Routing to Tier-2 Local Heuristics Engine.`,
     );
-    if (error.status || error.statusText) {
-      console.error(
-        `[GEMINI UNAVAILABLE] HTTP status: ${error.status} ${error.statusText || ""}`,
-      );
-    }
 
-    // 2. DYNAMICALLY CALCULATE SAVINGS for the local fallback
+    // --- UPGRADED LOCAL FALLBACK ENGINE ---
+
+    const msg = userMessage.toLowerCase();
+    let localReply = "";
+
+    // Calculate dynamic savings
     let dynamicSavings = 0;
-    rows.forEach((resource) => {
+    rows.forEach((r) => {
       if (
-        resource.status === "Active" ||
-        resource.status === "Pending Approval"
+        (r.status === "Active" || r.status === "Pending Approval") &&
+        (r.days_since_last_login >= 30 || r.is_malicious)
       ) {
-        const isIdle = resource.days_since_last_login >= 30;
-        const isMalicious = resource.is_malicious;
-
-        // If it's malicious (QUARANTINE) or idle (TERMINATE), it counts as savings
-        if (isIdle || isMalicious) {
-          dynamicSavings += Number(resource.monthly_cost) || 0;
-        }
+        dynamicSavings += Number(r.monthly_cost) || 0;
       }
     });
 
-    const msg = userMessage.toLowerCase();
-    if (msg.includes("figma")) lastResourceContext = "figma";
-    else if (msg.includes("vpn") || msg.includes("freevpn"))
-      lastResourceContext = "vpn";
-    else if (msg.includes("datadog")) lastResourceContext = "datadog";
-    else if (msg.includes("gitlab")) lastResourceContext = "gitlab";
-    else if (msg.includes("aws") || msg.includes("ec2"))
-      lastResourceContext = "aws";
+    // 1. Check if the user is asking about a SPECIFIC resource dynamically
+    // We split by spaces to try and catch partial names (e.g., "runner" for "Gitlab Runner")
+    const words = msg.split(/\s+/).filter((w) => w.length > 2);
+    const mentionedResource = rows.find((r) =>
+      words.some((word) => r.resource_name.toLowerCase().includes(word)),
+    );
 
-    // 3. INJECT the dynamic calculated value into the string
-    let localReply = `Neural Link offline. Operating via local metrics: You have ₹${dynamicSavings.toLocaleString("en-IN")} in potential savings identified.`;
+    // 2. Intent recognition flags
+    const isAskingCost = msg.match(
+      /(cost|spend|saving|save|money|budget|summary)/,
+    );
+    const isAskingTerminate = msg.match(
+      /(terminate|delete|remove|kill|idle|unused)/,
+    );
+    const isAskingQuarantine = msg.match(
+      /(quarantine|malicious|virus|malware|threat|hack)/,
+    );
+    const isAskingUpdate = msg.match(/(update|patch|upgrade|outdated)/);
 
-    if (lastResourceContext === "figma")
-      localReply =
-        "Figma Enterprise has been flagged to TERMINATE. It costs ₹120/month but hasn't been accessed in 45 days.";
-    else if (lastResourceContext === "vpn")
-      localReply =
-        "CRITICAL ALERT: FreeVPN_Crack.exe has been flagged as malicious. Immediate QUARANTINE recommended.";
-    else if (lastResourceContext === "datadog")
-      localReply =
-        "Datadog Test Environment is secure. It is actively used. Recommendation: KEEP.";
-    else if (lastResourceContext === "gitlab")
-      localReply =
-        "GitLab Runner (v14.1) requires a critical security patch. Recommendation: UPDATE.";
-    else if (lastResourceContext === "aws")
-      localReply =
-        "AWS EC2 Production is secure and active. Recommendation: KEEP.";
+    // 3. Construct intelligent response
+    if (mentionedResource) {
+      const name = mentionedResource.resource_name;
+      const cost = mentionedResource.monthly_cost;
+      const idle = mentionedResource.days_since_last_login;
+
+      if (mentionedResource.is_malicious) {
+        localReply = `CRITICAL ALERT: ${name} is flagged as malicious. Immediate QUARANTINE recommended. (Cost: ₹${cost}/mo)`;
+      } else if (idle >= 30) {
+        localReply = `${name} should be TERMINATED. It costs ₹${cost}/mo and has been idle for ${idle} days.`;
+      } else if (mentionedResource.needs_update) {
+        localReply = `${name} requires a critical security patch. Recommendation: UPDATE.`;
+      } else {
+        localReply = `${name} is secure and active (Idle: ${idle} days). Recommendation: KEEP.`;
+      }
+    } else if (isAskingQuarantine) {
+      const targets = rows
+        .filter((r) => r.is_malicious)
+        .map((r) => r.resource_name);
+      localReply = targets.length
+        ? `URGENT: The following resources are malicious and must be QUARANTINED: ${targets.join(", ")}.`
+        : `No active malicious threats detected.`;
+    } else if (isAskingTerminate) {
+      const targets = rows
+        .filter((r) => !r.is_malicious && r.days_since_last_login >= 30)
+        .map((r) => r.resource_name);
+      localReply = targets.length
+        ? `Based on telemetry, these idle resources should be TERMINATED: ${targets.join(", ")}.`
+        : `No resources are currently flagged for termination based on idle time.`;
+    } else if (isAskingUpdate) {
+      const targets = rows
+        .filter((r) => r.needs_update && !r.is_malicious)
+        .map((r) => r.resource_name);
+      localReply = targets.length
+        ? `These resources require critical patches (UPDATE): ${targets.join(", ")}.`
+        : `All active applications are up to date.`;
+    } else if (isAskingCost) {
+      localReply = `Local metrics report: You have ₹${dynamicSavings.toLocaleString("en-IN")} in potential savings identified. Focus on Quarantining malicious apps and Terminating idle resources to realize this.`;
+    } else {
+      // Default help fallback
+      localReply = `Neural Link offline. I am operating on local heuristics. You can ask me about costs, threats (quarantine), idle resources (terminate), or type the name of a specific application in the ledger.`;
+    }
 
     chatHistory.push(`Assassin AI: ${localReply}`);
     return res.json({ reply: localReply, source: "local-fallback" });
