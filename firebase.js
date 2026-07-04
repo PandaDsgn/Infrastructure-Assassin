@@ -1,15 +1,12 @@
 require("dotenv").config();
 
-// 1. Modern Firebase Admin Modular Imports
 const { initializeApp, cert } = require("firebase-admin/app");
 const { getFirestore } = require("firebase-admin/firestore");
 const { getAuth } = require("firebase-admin/auth");
 
 let credentialConfig;
 
-// 2. Determine environment and load credentials safely
 if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-  // CLOUD PRODUCTION: Parse the JSON string injected by the cloud provider's secrets manager
   try {
     const serviceAccountConfig = JSON.parse(
       process.env.FIREBASE_SERVICE_ACCOUNT,
@@ -26,7 +23,6 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT) {
     process.exit(1);
   }
 } else {
-  // LOCAL DEVELOPMENT: Fallback to the local JSON file
   try {
     const serviceAccount = require("./firebase-service-account.json");
     credentialConfig = cert(serviceAccount);
@@ -40,14 +36,11 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT) {
   }
 }
 
-// 3. Initialize the app using the selected credentials
 initializeApp({
   credential: credentialConfig,
 });
 
-// 4. Instantiate the services
 const db = getFirestore();
 const auth = getAuth();
 
-// 5. Export them for server.js
 module.exports = { db, auth };

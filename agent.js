@@ -1,11 +1,7 @@
-// agent.js
 require("dotenv").config();
-// @google/generative-ai reached end-of-life on Nov 30, 2025 - Google no
-// longer maintains it and calls against the current API can fail outright.
-// Use the current unified SDK instead.
+
 const { GoogleGenAI } = require("@google/genai");
 
-// Initialize Gemini Core
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const MODEL_NAME = "gemini-2.5-flash";
 
@@ -23,15 +19,12 @@ function computeGuaranteedAnswer(resource) {
 }
 
 async function evaluateResource(resource) {
-  // 1. Analyze the resource status locally
   const isIdle = resource.days_since_last_login >= 30 ? "YES" : "NO";
   const isMalicious = resource.is_malicious ? "YES" : "NO";
   const needsUpdate = resource.needs_update ? "YES" : "NO";
 
-  // 2. THE HACKATHON SAFETY NET: Calculate the correct answer locally
   let guaranteedAnswer = computeGuaranteedAnswer(resource);
 
-  // Sandbox short-circuit
   if (DEV_SANDBOX_MODE) {
     return guaranteedAnswer;
   }
@@ -50,7 +43,6 @@ async function evaluateResource(resource) {
     `;
 
   try {
-    // ⚡ TIER 1: GEMINI CLOUD PIPELINE ⚡
     if (!process.env.GEMINI_API_KEY) throw new Error("No Gemini key found");
     const result = await ai.models.generateContent({
       model: MODEL_NAME,
@@ -68,7 +60,6 @@ async function evaluateResource(resource) {
       `[GEMINI API ERROR] Single audit failed: ${error.message}. Routing to Groq...`,
     );
 
-    // ⚡ TIER 2: GROQ FALLBACK ⚡
     try {
       if (!process.env.GROQ_API_KEY) throw new Error("No Groq key found");
       const response = await fetch(
@@ -97,9 +88,43 @@ async function evaluateResource(resource) {
       return guaranteedAnswer;
     } catch (groqError) {
       console.log(
-        `[GROQ API ERROR] Single audit failed: ${groqError.message}. Dropping to safe defaults.`,
+        `[GROQ API ERROR] Single audit failed: ${groqError.message}. Routing to DeepSeek...`,
       );
-      return guaranteedAnswer;
+
+      try {
+        if (!process.env.DEEPSEEK_API_KEY)
+          throw new Error("No DeepSeek key found");
+        const response = await fetch(
+          "https://api.deepseek.com/chat/completions",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+            },
+            body: JSON.stringify({
+              model: "deepseek-chat",
+              messages: [{ role: "user", content: prompt }],
+            }),
+          },
+        );
+
+        if (!response.ok)
+          throw new Error(`DeepSeek HTTP Error: ${response.status}`);
+        const data = await response.json();
+        const rawResponse = data.choices[0].message.content.toUpperCase();
+
+        if (rawResponse.includes("QUARANTINE")) return "QUARANTINE";
+        if (rawResponse.includes("TERMINATE")) return "TERMINATE";
+        if (rawResponse.includes("UPDATE")) return "UPDATE";
+
+        return guaranteedAnswer;
+      } catch (deepseekError) {
+        console.log(
+          `[DEEPSEEK API ERROR] Single audit failed: ${deepseekError.message}. Dropping to safe defaults.`,
+        );
+        return guaranteedAnswer;
+      }
     }
   }
 }
@@ -136,7 +161,6 @@ async function evaluateResourcesBatch(resources) {
     `;
 
   try {
-    // ⚡ TIER 1: GEMINI ⚡
     if (!process.env.GEMINI_API_KEY) throw new Error("No Gemini key found");
     const result = await ai.models.generateContent({
       model: MODEL_NAME,
@@ -159,7 +183,6 @@ async function evaluateResourcesBatch(resources) {
       `[GEMINI API ERROR] Batch audit failed: ${error.message}. Routing to Groq...`,
     );
 
-    // ⚡ TIER 2: GROQ FALLBACK ⚡
     try {
       if (!process.env.GROQ_API_KEY) throw new Error("No Groq key found");
       const response = await fetch(
@@ -193,9 +216,48 @@ async function evaluateResourcesBatch(resources) {
       return finalAnswers;
     } catch (groqError) {
       console.log(
-        `[GROQ API ERROR] Batch audit request failed: ${groqError.message}. Dropping to safe defaults.`,
+        `[GROQ API ERROR] Batch audit failed: ${groqError.message}. Routing to DeepSeek...`,
       );
-      return guaranteedAnswers;
+
+      try {
+        if (!process.env.DEEPSEEK_API_KEY)
+          throw new Error("No DeepSeek key found");
+        const response = await fetch(
+          "https://api.deepseek.com/chat/completions",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+            },
+            body: JSON.stringify({
+              model: "deepseek-chat",
+              messages: [{ role: "user", content: prompt }],
+            }),
+          },
+        );
+
+        if (!response.ok)
+          throw new Error(`DeepSeek HTTP Error: ${response.status}`);
+        const data = await response.json();
+        const rawResponse = data.choices[0].message.content.toUpperCase();
+
+        const finalAnswers = [...guaranteedAnswers];
+        const lineRegex = /(\d+)\s*[:\-]\s*(QUARANTINE|TERMINATE|UPDATE|KEEP)/g;
+        let match;
+        while ((match = lineRegex.exec(rawResponse)) !== null) {
+          const idx = parseInt(match[1], 10);
+          if (idx >= 0 && idx < finalAnswers.length) {
+            finalAnswers[idx] = match[2];
+          }
+        }
+        return finalAnswers;
+      } catch (deepseekError) {
+        console.log(
+          `[DEEPSEEK API ERROR] Batch audit request failed: ${deepseekError.message}. Dropping to safe defaults.`,
+        );
+        return guaranteedAnswers;
+      }
     }
   }
 }

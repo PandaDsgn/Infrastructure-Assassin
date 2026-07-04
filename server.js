@@ -5,8 +5,7 @@ const crypto = require("crypto");
 const { db, auth } = require("./firebase");
 const pgDb = require("./db");
 const { evaluateResource, evaluateResourcesBatch } = require("./agent");
-// @google/generative-ai reached end-of-life on Nov 30, 2025 - use the
-// current unified SDK instead.
+
 const { GoogleGenAI } = require("@google/genai");
 
 const app = express();
@@ -14,7 +13,6 @@ app.use(cors());
 app.use(express.static("public"));
 app.use(express.json());
 
-// Initialize Gemini for the Conversational Chat Core
 if (!process.env.GEMINI_API_KEY) {
   console.error(
     "[STARTUP WARNING] GEMINI_API_KEY is not set in this environment - " +
@@ -27,7 +25,6 @@ if (!process.env.GEMINI_API_KEY) {
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const CHAT_MODEL_NAME = "gemini-2.5-flash";
 
-// --- PUBLIC CONFIG ENDPOINT ---
 app.get("/api/config", (req, res) => {
   res.json({
     apiKey: process.env.FIREBASE_API_KEY,
@@ -39,7 +36,6 @@ app.get("/api/config", (req, res) => {
   });
 });
 
-// --- SECURE FIREBASE MIDDLEWARE ---
 async function authenticateUser(req, res, next) {
   const authHeader = req.headers.authorization;
   let token = null;
@@ -81,7 +77,6 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// --- REAL-TIME EVENT STREAM (SERVER-SENT EVENTS) ---
 let sseClients = [];
 
 function pushToLocalClients(payload) {
@@ -89,9 +84,7 @@ function pushToLocalClients(payload) {
   sseClients.forEach((client) => {
     try {
       client.res.write(`data: ${message}\n\n`);
-    } catch (err) {
-      // Dead connection
-    }
+    } catch (err) {}
   });
 }
 
@@ -133,7 +126,6 @@ app.get("/api/events", authenticateUser, (req, res) => {
   });
 });
 
-// --- IDENTITY & REGISTRATION ENDPOINTS ---
 app.get("/api/auth/me", authenticateUser, (req, res) => {
   res.json({ name: req.user.name, role: req.user.role, email: req.user.email });
 });
@@ -162,7 +154,6 @@ app.post("/api/auth/register", authenticateUser, async (req, res) => {
   }
 });
 
-// --- INFRASTRUCTURE AUDIT ROUTE ---
 let cachedAuditResults = null;
 let lastAuditTime = 0;
 
@@ -190,7 +181,6 @@ app.get("/api/audit", authenticateUser, async (req, res) => {
   }
 });
 
-// --- RBAC ACTION & APPROVAL ROUTES ---
 function resolveTargetStatus(actionType) {
   if (actionType === "TERMINATE") return "Terminated";
   if (actionType === "QUARANTINE") return "Quarantined";
@@ -394,7 +384,6 @@ app.get("/api/requests/outgoing", authenticateUser, async (req, res) => {
   }
 });
 
-// --- ADMIN USER MANAGEMENT ROUTES ---
 app.get("/api/users", authenticateUser, requireAdmin, async (req, res) => {
   try {
     const snapshot = await db.collection("users").get();
@@ -442,22 +431,17 @@ app.delete(
   },
 );
 
-// --- CONVERSATIONAL AI ---
-let activeUserTiers = {}; // { uid: "gemini" | "groq" | "deepseek" | "auto" }
+let activeUserTiers = {};
 let chatHistory = [];
 
 app.post("/api/chat", authenticateUser, async (req, res) => {
   const userMessage = req.body.message.trim();
   const userId = req.user.uid;
 
-  // Initialize user preference to "auto" (default waterfall) if not set
   if (!activeUserTiers[userId]) {
     activeUserTiers[userId] = "auto";
   }
 
-  // ==========================================
-  // COMMAND INTERCEPTOR
-  // ==========================================
   const commandMsg = userMessage.toLowerCase();
   if (commandMsg.startsWith("/use ")) {
     const target = commandMsg.replace("/use ", "").trim();
@@ -482,7 +466,6 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
   chatHistory.push(`User: ${userMessage}`);
   if (chatHistory.length > 6) chatHistory.shift();
 
-  // Fetch DB state for the AIs
   let rows = [];
   try {
     const dbResult = await pgDb.query("SELECT * FROM resources");
@@ -493,7 +476,6 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
       .json({ error: "Failed to read database for context." });
   }
 
-  // Unified System Prompt
   const systemPrompt = `You are "Infrastructure Assassin", an enterprise IT security AI.
         Talking to ${req.user.name} (Role: ${req.user.role}).
         Infrastructure Data: ${JSON.stringify(rows)}
@@ -506,9 +488,6 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
 
   const userPreference = activeUserTiers[userId];
 
-  // ==========================================
-  // TIER 1: GEMINI
-  // ==========================================
   if (userPreference === "auto" || userPreference === "gemini") {
     try {
       if (!process.env.GEMINI_API_KEY) throw new Error("No Gemini key found");
@@ -530,9 +509,6 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
     }
   }
 
-  // ==========================================
-  // TIER 2: GROQ
-  // ==========================================
   if (userPreference === "auto" || userPreference === "groq") {
     try {
       if (!process.env.GROQ_API_KEY) throw new Error("No Groq key found");
@@ -578,9 +554,6 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
     }
   }
 
-  // ==========================================
-  // TIER 3: DEEPSEEK
-  // ==========================================
   if (userPreference === "auto" || userPreference === "deepseek") {
     try {
       if (!process.env.DEEPSEEK_API_KEY)
@@ -624,9 +597,6 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
     }
   }
 
-  // ==========================================
-  // TIER 4: LOCAL HEURISTICS ENGINE (No API required)
-  // ==========================================
   const msg = userMessage.toLowerCase();
   let localReply = "";
   let dynamicSavings = 0;
