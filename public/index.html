@@ -20,18 +20,32 @@
                 --gold: #b8894f;
                 --success: #1f5c45;
                 --warning: #b8894f;
+                --warning-rgb: 184, 137, 79;
                 --danger: #8c3a3a;
                 --quarantine: #6b4570;
                 --pending: #5b7380;
+                --shadow-rgb: 28, 35, 29;
                 --serif: "Fraunces", Georgia, serif;
                 --sans: "Inter", -apple-system, sans-serif;
             }
             [data-theme="dark"] {
-                --bg-color: #1b2119;
-                --card-bg: #232b21;
-                --text-main: #f1f3ec;
-                --text-muted: #9aa595;
-                --border-color: #333d30;
+                /* Neutral greyscale surfaces - no green tint */
+                --bg-color: #19191b;
+                --card-bg: #232326;
+                --text-main: #f0f0f0;
+                --text-muted: #a3a3a6;
+                --border-color: #38383b;
+                /* Accent letterings swap to their lighter/pastel counterparts.
+                   --primary is intentionally left alone since it's used as a
+                   solid button background (with white text) in several places. */
+                --gold: #e8c383;
+                --warning: #e8c383;
+                --warning-rgb: 232, 195, 131;
+                --success: #8fd9ab;
+                --danger: #e69a9a;
+                --quarantine: #cba8d9;
+                --pending: #a3cde0;
+                --shadow-rgb: 0, 0, 0;
             }
             * {
                 box-sizing: border-box;
@@ -89,7 +103,7 @@
             .user-role {
                 font-family: var(--sans);
                 font-size: 0.72rem;
-                color: var(--primary);
+                color: var(--success);
                 text-transform: uppercase;
                 letter-spacing: 0.1em;
                 font-weight: 600;
@@ -140,7 +154,7 @@
                 padding: 24px 26px;
                 border-radius: 14px;
                 flex: 1;
-                box-shadow: 0 10px 28px rgba(28, 35, 29, 0.05);
+                box-shadow: 0 10px 28px rgba(var(--shadow-rgb), 0.05);
             }
             .stat-box .label {
                 font-family: var(--sans);
@@ -172,7 +186,7 @@
                 display: flex;
                 flex-direction: column;
                 justify-content: space-between;
-                box-shadow: 0 10px 28px rgba(28, 35, 29, 0.05);
+                box-shadow: 0 10px 28px rgba(var(--shadow-rgb), 0.05);
             }
             .card-header {
                 display: flex;
@@ -225,6 +239,21 @@
                 background: rgba(91, 115, 128, 0.12);
                 color: var(--pending);
             }
+            [data-theme="dark"] .badge-terminate {
+                background: rgba(230, 154, 154, 0.15);
+            }
+            [data-theme="dark"] .badge-quarantine {
+                background: rgba(203, 168, 217, 0.15);
+            }
+            [data-theme="dark"] .badge-update {
+                background: rgba(232, 195, 131, 0.18);
+            }
+            [data-theme="dark"] .badge-keep {
+                background: rgba(143, 217, 171, 0.15);
+            }
+            [data-theme="dark"] .badge-pending {
+                background: rgba(163, 205, 224, 0.15);
+            }
 
             .details {
                 display: grid;
@@ -272,13 +301,13 @@
 
             @keyframes pulse-warning {
                 0% {
-                    box-shadow: 0 0 0 0 rgba(184, 137, 79, 0.55);
+                    box-shadow: 0 0 0 0 rgba(var(--warning-rgb), 0.55);
                 }
                 70% {
-                    box-shadow: 0 0 0 8px rgba(184, 137, 79, 0);
+                    box-shadow: 0 0 0 8px rgba(var(--warning-rgb), 0);
                 }
                 100% {
-                    box-shadow: 0 0 0 0 rgba(184, 137, 79, 0);
+                    box-shadow: 0 0 0 0 rgba(var(--warning-rgb), 0);
                 }
             }
             .btn-undo-active {
@@ -296,7 +325,7 @@
             #loadingText {
                 font-family: var(--sans);
                 font-weight: 600;
-                color: var(--primary);
+                color: var(--success);
                 display: flex;
                 align-items: center;
                 gap: 8px;
@@ -310,7 +339,7 @@
                 padding: 26px;
                 border-radius: 16px;
                 margin-bottom: 24px;
-                box-shadow: 0 10px 28px rgba(28, 35, 29, 0.05);
+                box-shadow: 0 10px 28px rgba(var(--shadow-rgb), 0.05);
                 position: relative;
             }
             #admin-panel::before {
@@ -359,6 +388,9 @@
                 background: var(--danger);
                 color: white;
             }
+            [data-theme="dark"] .btn-reject:hover {
+                color: #241414;
+            }
             #chat-widget {
                 position: fixed;
                 top: 40px;
@@ -368,7 +400,7 @@
                 background: var(--card-bg);
                 border: 1px solid var(--border-color);
                 border-radius: 18px;
-                box-shadow: 0 16px 40px rgba(28, 35, 29, 0.1);
+                box-shadow: 0 16px 40px rgba(var(--shadow-rgb), 0.1);
                 display: flex;
                 flex-direction: column;
                 overflow: hidden;
@@ -438,7 +470,7 @@
             #chat-send {
                 background: transparent;
                 border: none;
-                color: var(--primary);
+                color: var(--success);
                 font-family: var(--sans);
                 font-weight: 700;
                 font-size: 0.82rem;
@@ -659,7 +691,7 @@
             </div>
 
             <div id="admin-panel" style="display: none">
-                <h3 style="margin-top: 0; color: var(--primary)">
+                <h3 style="margin-top: 0; color: var(--success)">
                     Admin Control Center
                 </h3>
                 <div
@@ -1263,7 +1295,7 @@
                         // The Shield: Check user role. If IT-Director, show label. If not, show Terminate button.
                         const actionBtnHTML =
                             u.role === "IT-Director"
-                                ? `<span style="font-size: 0.85rem; color: var(--primary); font-weight: bold; padding: 8px;">ADMIN</span>`
+                                ? `<span style="font-size: 0.85rem; color: var(--success); font-weight: bold; padding: 8px;">ADMIN</span>`
                                 : `<button class="btn-reject" onclick="initiateLifecycle('${userDivId}', 'TERMINATE', '${u.uid}', 'user')">Terminate</button>`;
 
                         list.innerHTML += `
