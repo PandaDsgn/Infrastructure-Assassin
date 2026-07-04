@@ -492,9 +492,18 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
   chatHistory.push(`User: ${userMessage}`);
   if (chatHistory.length > 6) chatHistory.shift();
 
+  // 1. Move the database query OUTSIDE the try block so the fallback engine can read the rows
+  let rows = [];
   try {
-    const { rows } = await pgDb.query("SELECT * FROM resources");
+    const dbResult = await pgDb.query("SELECT * FROM resources");
+    rows = dbResult.rows;
+  } catch (dbErr) {
+    return res
+      .status(500)
+      .json({ error: "Failed to read database for context." });
+  }
 
+  try {
     const prompt = `You are "Infrastructure Assassin", an enterprise IT security AI.
         Talking to ${req.user.name} (Role: ${req.user.role}).
         Infrastructure Data: ${JSON.stringify(rows)}
@@ -525,6 +534,23 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
       );
     }
 
+    // 2. DYNAMICALLY CALCULATE SAVINGS for the local fallback
+    let dynamicSavings = 0;
+    rows.forEach((resource) => {
+      if (
+        resource.status === "Active" ||
+        resource.status === "Pending Approval"
+      ) {
+        const isIdle = resource.days_since_last_login >= 30;
+        const isMalicious = resource.is_malicious;
+
+        // If it's malicious (QUARANTINE) or idle (TERMINATE), it counts as savings
+        if (isIdle || isMalicious) {
+          dynamicSavings += Number(resource.monthly_cost) || 0;
+        }
+      }
+    });
+
     const msg = userMessage.toLowerCase();
     if (msg.includes("figma")) lastResourceContext = "figma";
     else if (msg.includes("vpn") || msg.includes("freevpn"))
@@ -534,8 +560,8 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
     else if (msg.includes("aws") || msg.includes("ec2"))
       lastResourceContext = "aws";
 
-    let localReply =
-      "Neural Link offline. Operating via local metrics: You have ₹970 in potential savings identified.";
+    // 3. INJECT the dynamic calculated value into the string
+    let localReply = `Neural Link offline. Operating via local metrics: You have ₹${dynamicSavings.toLocaleString("en-IN")} in potential savings identified.`;
 
     if (lastResourceContext === "figma")
       localReply =
