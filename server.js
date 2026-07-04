@@ -553,16 +553,15 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
     );
 
     // 2. Intent recognition flags
-    const isAskingCost = msg.match(
-      /(cost|spend|saving|save|money|budget|summary)/,
-    );
+    // 2. Intent recognition flags (Updated to catch stems and typos)
+    const isAskingCost = msg.match(/(cost|spend|sav|money|budget|summary)/);
     const isAskingTerminate = msg.match(
-      /(terminate|delete|remove|kill|idle|unused)/,
+      /(terminat|delete|remove|kill|idle|unused)/,
     );
     const isAskingQuarantine = msg.match(
-      /(quarantine|malicious|virus|malware|threat|hack)/,
+      /(quarantin|quanrantin|malicious|virus|malware|threat|hack)/,
     );
-    const isAskingUpdate = msg.match(/(update|patch|upgrade|outdated)/);
+    const isAskingUpdate = msg.match(/(updat|patch|upgrad|outdated)/);
 
     // 3. Construct intelligent response
     if (mentionedResource) {
