@@ -1497,15 +1497,6 @@
                         if (data.pending)
                             alert(`🛡️ DISPATCHED: ${data.message}`);
                         else alert(`✅ SUCCESS: ${data.message}`);
-                        currentAuditHash = "";
-                        runAudit();
-                        if (
-                            document.getElementById("display-role")
-                                .textContent === "IT-Director"
-                        ) {
-                            currentInboxHash = "";
-                            loadAdminInbox();
-                        }
                     }
                 } catch (error) {
                     if (!silentPreFlight) alert("Action failed.");
@@ -1669,11 +1660,6 @@
                     });
                     const data = await response.json();
                     alert(data.message);
-
-                    currentInboxHash = "";
-                    currentAuditHash = "";
-                    loadAdminInbox();
-                    runAudit();
                 } catch (error) {
                     alert("Resolution failed.");
                 }
