@@ -432,11 +432,16 @@ app.delete(
 );
 
 let activeUserTiers = {};
-let chatHistory = [];
+let chatHistories = {};
+const MAX_CHAT_HISTORY = 6;
 
 app.post("/api/chat", authenticateUser, async (req, res) => {
   const userMessage = req.body.message.trim();
   const userId = req.user.uid;
+
+  if (!chatHistories[userId]) {
+    chatHistories[userId] = [];
+  }
 
   if (!activeUserTiers[userId]) {
     activeUserTiers[userId] = "auto";
@@ -453,7 +458,10 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
         target === "auto" ? "Default Waterfall Cascade" : target.toUpperCase();
       const confirmationReply = `Routing preference updated. System is now locked to: **${targetDisplay}**.`;
 
-      chatHistory.push(`System: Locked to ${target}`);
+      chatHistories[userId].push(`System: Locked to ${target}`);
+      if (chatHistories[userId].length > MAX_CHAT_HISTORY) {
+        chatHistories[userId].shift();
+      }
       return res.json({ reply: confirmationReply, source: `System Override` });
     } else {
       return res.json({
@@ -463,8 +471,10 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
     }
   }
 
-  chatHistory.push(`User: ${userMessage}`);
-  if (chatHistory.length > 6) chatHistory.shift();
+  chatHistories[userId].push(`User: ${userMessage}`);
+  if (chatHistories[userId].length > MAX_CHAT_HISTORY) {
+    chatHistories[userId].shift();
+  }
 
   let rows = [];
   try {
@@ -479,7 +489,7 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
   const systemPrompt = `You are "Infrastructure Assassin", an enterprise IT security AI.
         Talking to ${req.user.name} (Role: ${req.user.role}).
         Infrastructure Data: ${JSON.stringify(rows)}
-        Recent Context: ${chatHistory.join("\n")}
+        Recent Context: ${chatHistories[userId].join("\n")}
 
         RULES:
         1. Never execute actions.
@@ -496,7 +506,10 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
         contents: `${systemPrompt}\n\nRespond to: "${userMessage}"`,
       });
       const finalReply = result.text.trim();
-      chatHistory.push(`Assassin AI: ${finalReply}`);
+      chatHistories[userId].push(`Assassin AI: ${finalReply}`);
+      if (chatHistories[userId].length > MAX_CHAT_HISTORY) {
+        chatHistories[userId].shift();
+      }
       return res.json({ reply: finalReply, source: "Gemini (Tier 1)" });
     } catch (err) {
       console.warn(`[GEMINI FAILED] ${err.message}.`);
@@ -538,7 +551,10 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
 
       const data = await response.json();
       const finalReply = data.choices[0].message.content.trim();
-      chatHistory.push(`Assassin AI: ${finalReply}`);
+      chatHistories[userId].push(`Assassin AI: ${finalReply}`);
+      if (chatHistories[userId].length > MAX_CHAT_HISTORY) {
+        chatHistories[userId].shift();
+      }
       return res.json({
         reply: finalReply,
         source: "Groq (Tier 2)",
@@ -584,7 +600,10 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
 
       const data = await response.json();
       const finalReply = data.choices[0].message.content.trim();
-      chatHistory.push(`Assassin AI: ${finalReply}`);
+      chatHistories[userId].push(`Assassin AI: ${finalReply}`);
+      if (chatHistories[userId].length > MAX_CHAT_HISTORY) {
+        chatHistories[userId].shift();
+      }
       return res.json({ reply: finalReply, source: "DeepSeek (Tier 3)" });
     } catch (err) {
       console.warn(`[DEEPSEEK FAILED] ${err.message}.`);
@@ -665,7 +684,10 @@ app.post("/api/chat", authenticateUser, async (req, res) => {
     localReply = `Neural Link offline. I am operating on local heuristics. You can ask me about costs, threats (quarantine), idle resources (terminate), or type the name of a specific application in the ledger.`;
   }
 
-  chatHistory.push(`Assassin AI: ${localReply}`);
+  chatHistories[userId].push(`Assassin AI: ${localReply}`);
+  if (chatHistories[userId].length > MAX_CHAT_HISTORY) {
+    chatHistories[userId].shift();
+  }
   return res.json({ reply: localReply, source: "Heuristics (Tier 4)" });
 });
 
