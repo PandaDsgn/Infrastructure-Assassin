@@ -60,7 +60,11 @@
                 min-height: 100vh;
                 transition:
                     background-color 0.3s ease,
-                    color 0.3s ease;
+                    color 0.3s ease,
+                    padding-right 0.3s ease;
+            }
+            body.chat-collapsed {
+                padding-right: 56px;
             }
             header {
                 display: flex;
@@ -125,6 +129,54 @@
             .theme-toggle:hover {
                 border-color: var(--gold);
                 color: var(--gold);
+            }
+            .inbox-launchers {
+                display: flex;
+                gap: 8px;
+                margin-bottom: 12px;
+            }
+            .icon-btn {
+                position: relative;
+                background: transparent;
+                border: 1px solid var(--border-color);
+                color: var(--text-muted);
+                padding: 6px 14px;
+                border-radius: 999px;
+                cursor: pointer;
+                font-family: var(--sans);
+                font-size: 0.72rem;
+                letter-spacing: 0.02em;
+                font-weight: 500;
+                flex: none;
+                transition: all 0.2s ease;
+            }
+            .icon-btn:hover {
+                border-color: var(--gold);
+                color: var(--gold);
+                background: transparent;
+            }
+            .badge-dot {
+                display: none;
+                position: absolute;
+                top: -3px;
+                right: -3px;
+                min-width: 16px;
+                height: 16px;
+                padding: 0 4px;
+                border-radius: 999px;
+                background: var(--danger);
+                color: #fff;
+                font-size: 0.62rem;
+                font-weight: 700;
+                line-height: 16px;
+                text-align: center;
+                border: 2px solid var(--bg-color);
+            }
+            .badge-dot.neutral {
+                background: var(--pending);
+            }
+            .badge-dot.show {
+                display: block;
             }
             .btn-logout {
                 background: transparent;
@@ -405,6 +457,18 @@
                 flex-direction: column;
                 overflow: hidden;
                 z-index: 1000;
+                transition:
+                    width 0.3s ease,
+                    bottom 0.3s ease;
+            }
+            #chat-widget.collapsed {
+                bottom: auto;
+                width: 240px;
+                cursor: pointer;
+            }
+            #chat-widget.collapsed #chat-history,
+            #chat-widget.collapsed #chat-input-area {
+                display: none;
             }
             #chat-header {
                 background: var(--card-bg);
@@ -418,6 +482,132 @@
                 justify-content: space-between;
                 align-items: center;
                 border-bottom: 1px solid var(--border-color);
+            }
+            #chat-widget.collapsed #chat-header {
+                border-bottom: none;
+            }
+            .chat-toggle-btn {
+                background: transparent;
+                border: none;
+                color: var(--text-muted);
+                font-family: var(--sans);
+                font-size: 1rem;
+                line-height: 1;
+                padding: 2px 6px;
+                flex: none;
+                cursor: pointer;
+            }
+            .chat-toggle-btn:hover {
+                background: transparent;
+                color: var(--gold);
+            }
+
+            /* --- INBOX MODAL (Incoming + Outgoing) --- */
+            .modal-overlay {
+                position: fixed;
+                inset: 0;
+                background: rgba(var(--shadow-rgb), 0.45);
+                z-index: 2000;
+                display: none;
+                align-items: center;
+                justify-content: center;
+                padding: 40px;
+            }
+            .modal-overlay.open {
+                display: flex;
+            }
+            .modal-panel {
+                background: var(--card-bg);
+                border: 1px solid var(--border-color);
+                border-radius: 18px;
+                width: 560px;
+                max-width: 100%;
+                max-height: 82vh;
+                display: flex;
+                flex-direction: column;
+                box-shadow: 0 20px 50px rgba(var(--shadow-rgb), 0.2);
+                overflow: hidden;
+            }
+            .modal-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 20px 24px;
+                border-bottom: 1px solid var(--border-color);
+            }
+            .modal-header h3 {
+                margin: 0;
+                font-family: var(--serif);
+                font-weight: 600;
+                font-size: 1.2rem;
+            }
+            .modal-close {
+                background: transparent;
+                border: none;
+                color: var(--text-muted);
+                font-size: 1.3rem;
+                line-height: 1;
+                cursor: pointer;
+                flex: none;
+                padding: 2px 6px;
+            }
+            .modal-close:hover {
+                background: transparent;
+                color: var(--danger);
+            }
+            .modal-body {
+                padding: 20px 24px 24px;
+                overflow-y: auto;
+            }
+            .inbox-entry {
+                background: var(--bg-color);
+                border: 1px solid var(--border-color);
+                padding: 16px;
+                border-radius: 12px;
+                margin-bottom: 10px;
+                font-family: var(--sans);
+                font-size: 0.88rem;
+            }
+            .inbox-entry:last-child {
+                margin-bottom: 0;
+            }
+            .inbox-entry-row {
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+                gap: 10px;
+                margin-bottom: 10px;
+            }
+            .inbox-timestamp {
+                font-size: 0.72rem;
+                color: var(--text-muted);
+                white-space: nowrap;
+                margin-top: 2px;
+            }
+            .status-tag {
+                font-size: 0.68rem;
+                padding: 3px 10px;
+                border-radius: 999px;
+                font-weight: 600;
+                text-transform: uppercase;
+                letter-spacing: 0.04em;
+                white-space: nowrap;
+            }
+            .status-tag.Pending {
+                background: rgba(91, 115, 128, 0.12);
+                color: var(--pending);
+            }
+            .status-tag.Approved {
+                background: rgba(31, 92, 69, 0.1);
+                color: var(--success);
+            }
+            .status-tag.Rejected {
+                background: rgba(140, 58, 58, 0.1);
+                color: var(--danger);
+            }
+            .status-tag.Cancelled {
+                background: rgba(116, 128, 111, 0.14);
+                color: var(--text-muted);
             }
             #chat-history {
                 flex-grow: 1;
@@ -664,6 +854,32 @@
                     </p>
                 </div>
                 <div class="user-profile">
+                    <div class="inbox-launchers">
+                        <button
+                            class="icon-btn"
+                            id="incoming-inbox-btn"
+                            style="display: none"
+                            onclick="openInboxModal('incoming')"
+                        >
+                            📥 Incoming Inbox
+                            <span
+                                class="badge-dot"
+                                id="incoming-inbox-badge"
+                            ></span>
+                        </button>
+                        <button
+                            class="icon-btn"
+                            id="outgoing-inbox-btn"
+                            style="display: none"
+                            onclick="openInboxModal('outgoing')"
+                        >
+                            📤 Outgoing Inbox
+                            <span
+                                class="badge-dot neutral"
+                                id="outgoing-inbox-badge"
+                            ></span>
+                        </button>
+                    </div>
                     <button class="theme-toggle" onclick="toggleTheme()">
                         Evening Mode
                     </button>
@@ -694,28 +910,28 @@
                 <h3 style="margin-top: 0; color: var(--success)">
                     Admin Control Center
                 </h3>
-                <div
-                    style="
-                        display: grid;
-                        grid-template-columns: 1fr 1fr;
-                        gap: 20px;
-                    "
-                >
-                    <div>
-                        <h4 style="margin-top: 0">Pending Authorizations</h4>
-                        <div id="inbox-list">
-                            <p style="color: var(--text-muted)">
-                                No pending requests.
-                            </p>
-                        </div>
+                <div>
+                    <h4 style="margin-top: 0">Personnel Directory</h4>
+                    <div id="user-list-panel">
+                        <p style="color: var(--text-muted)">Loading users...</p>
                     </div>
-                    <div>
-                        <h4 style="margin-top: 0">Personnel Directory</h4>
-                        <div id="user-list-panel">
-                            <p style="color: var(--text-muted)">
-                                Loading users...
-                            </p>
-                        </div>
+                </div>
+            </div>
+
+            <div
+                class="modal-overlay"
+                id="inbox-modal-overlay"
+                onclick="closeInboxModal()"
+            >
+                <div class="modal-panel" onclick="event.stopPropagation()">
+                    <div class="modal-header">
+                        <h3 id="inbox-modal-title">Inbox</h3>
+                        <button class="modal-close" onclick="closeInboxModal()">
+                            &times;
+                        </button>
+                    </div>
+                    <div class="modal-body" id="inbox-modal-body">
+                        <p style="color: var(--text-muted)">Loading...</p>
                     </div>
                 </div>
             </div>
@@ -726,17 +942,40 @@
             <div id="results" class="dashboard"></div>
 
             <div id="chat-widget">
-                <div id="chat-header">
+                <div
+                    id="chat-header"
+                    onclick="
+                        if (
+                            document
+                                .getElementById('chat-widget')
+                                .classList.contains('collapsed')
+                        )
+                            toggleChatCollapse();
+                    "
+                >
                     <span>Agent Chat Interface</span>
-                    <span
-                        style="
-                            height: 8px;
-                            width: 8px;
-                            background: var(--success);
-                            border-radius: 50%;
-                            display: inline-block;
-                        "
-                    ></span>
+                    <div style="display: flex; align-items: center; gap: 10px">
+                        <span
+                            style="
+                                height: 8px;
+                                width: 8px;
+                                background: var(--success);
+                                border-radius: 50%;
+                                display: inline-block;
+                            "
+                        ></span>
+                        <button
+                            class="chat-toggle-btn"
+                            id="chat-collapse-btn"
+                            title="Collapse chat"
+                            onclick="
+                                event.stopPropagation();
+                                toggleChatCollapse();
+                            "
+                        >
+                            &minus;
+                        </button>
+                    </div>
                 </div>
                 <div id="chat-history">
                     <div class="msg msg-ai">
@@ -762,7 +1001,16 @@
             // Hash tracking for smart DOM diffing
             let currentAuditHash = "";
             let currentInboxHash = "";
+            let currentOutgoingHash = "";
             let currentUserHash = "";
+
+            // Inbox modal state: which list is currently shown ("incoming" |
+            // "outgoing" | null), plus the last fetched data for each so
+            // opening the modal can paint instantly before the fresh fetch
+            // resolves.
+            let activeInboxModal = null;
+            let latestIncomingRequests = [];
+            let latestOutgoingRequests = [];
 
             // --- REAL-TIME SYNC (SERVER-SENT EVENTS) ---
             // Uses native EventSource rather than a hand-rolled fetch() +
@@ -828,6 +1076,9 @@
                         if (role === "IT-Director") {
                             currentInboxHash = "";
                             loadAdminInbox();
+                        } else if (role === "Junior-Developer") {
+                            currentOutgoingHash = "";
+                            loadOutgoingInbox();
                         }
                         break;
 
@@ -836,6 +1087,10 @@
                         currentAuditHash = "";
                         loadAdminInbox();
                         runAudit();
+                        if (role === "Junior-Developer") {
+                            currentOutgoingHash = "";
+                            loadOutgoingInbox();
+                        }
                         break;
 
                     case "user_registered":
@@ -863,6 +1118,26 @@
             }
             if (localStorage.getItem("theme") === "dark")
                 document.documentElement.setAttribute("data-theme", "dark");
+
+            function toggleChatCollapse() {
+                const widget = document.getElementById("chat-widget");
+                const btn = document.getElementById("chat-collapse-btn");
+                const collapsed = widget.classList.toggle("collapsed");
+                document.body.classList.toggle("chat-collapsed", collapsed);
+                btn.innerHTML = collapsed ? "&#43;" : "&minus;";
+                btn.title = collapsed ? "Expand chat" : "Collapse chat";
+                localStorage.setItem("chatCollapsed", collapsed ? "1" : "0");
+            }
+            if (localStorage.getItem("chatCollapsed") === "1") {
+                document
+                    .getElementById("chat-widget")
+                    .classList.add("collapsed");
+                document.body.classList.add("chat-collapsed");
+                const collapseBtn =
+                    document.getElementById("chat-collapse-btn");
+                collapseBtn.innerHTML = "&#43;";
+                collapseBtn.title = "Expand chat";
+            }
 
             function getAuthHeaders() {
                 return {
@@ -966,7 +1241,13 @@
                         document.getElementById("results").innerHTML = "";
                         currentAuditHash = "";
                         currentInboxHash = "";
+                        currentOutgoingHash = "";
                         currentUserHash = "";
+                        latestIncomingRequests = [];
+                        latestOutgoingRequests = [];
+                        setBadge("incoming-inbox-badge", 0);
+                        setBadge("outgoing-inbox-badge", 0);
+                        closeInboxModal();
                     });
             }
 
@@ -1215,7 +1496,35 @@
                 }
             }
 
-            // --- ADMIN INBOX ---
+            // --- INBOX TIMESTAMP HELPER ---
+            function formatTimestamp(ts) {
+                if (!ts) return "—";
+                return new Date(ts).toLocaleString([], {
+                    day: "numeric",
+                    month: "short",
+                    year: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit",
+                });
+            }
+
+            function setBadge(elementId, count, neutral) {
+                const badge = document.getElementById(elementId);
+                if (!badge) return;
+                if (count > 0) {
+                    badge.innerText = count > 9 ? "9+" : String(count);
+                    badge.classList.add("show");
+                } else {
+                    badge.classList.remove("show");
+                }
+            }
+
+            // --- ADMIN INCOMING INBOX ---
+            // Drives the red notification dot on the header icon at all
+            // times (cheap - just a length check), and re-renders the modal
+            // body only when it's actually open, so background polling
+            // never fights with something the Admin is mid-way through
+            // reading/approving.
             async function loadAdminInbox() {
                 try {
                     const response = await fetch(
@@ -1224,30 +1533,125 @@
                     );
                     const requests = await response.json();
 
+                    setBadge("incoming-inbox-badge", requests.length);
+
                     const reqHash = JSON.stringify(requests);
                     if (reqHash === currentInboxHash) return;
                     currentInboxHash = reqHash;
+                    latestIncomingRequests = requests;
 
-                    const list = document.getElementById("inbox-list");
-                    list.innerHTML = "";
+                    if (activeInboxModal === "incoming") {
+                        document.getElementById("inbox-modal-body").innerHTML =
+                            renderIncomingList(requests);
+                    }
+                } catch (error) {
+                    console.error("Inbox failed to load.");
+                }
+            }
 
-                    if (requests.length === 0)
-                        return (list.innerHTML =
-                            "<p style='color: var(--text-muted);'>No pending requests.</p>");
-
-                    requests.forEach((req) => {
-                        list.innerHTML += `
-                        <div class="inbox-card">
-                            <div><strong>${req.requester}</strong> requests <strong>${req.action}</strong> authorization for <em>${req.resource}</em></div>
+            function renderIncomingList(requests) {
+                if (requests.length === 0) {
+                    return "<p style='color: var(--text-muted);'>No pending requests.</p>";
+                }
+                return requests
+                    .map(
+                        (req) => `
+                        <div class="inbox-entry">
+                            <div class="inbox-entry-row">
+                                <div><strong>${req.requester}</strong> requests <strong>${req.action}</strong> authorization for <em>${req.resource}</em></div>
+                                <div class="inbox-timestamp">${formatTimestamp(req.requested_at)}</div>
+                            </div>
                             <div style="display: flex; gap: 10px;">
                                 <button class="btn-approve" onclick="resolveAction('${req.id}', 'Approve')">Approve</button>
                                 <button class="btn-reject" onclick="resolveAction('${req.id}', 'Reject')">Reject</button>
                             </div>
-                        </div>`;
-                    });
+                        </div>`,
+                    )
+                    .join("");
+            }
+
+            // --- DEVELOPER OUTGOING INBOX ---
+            // Reads from /api/requests/outgoing (the permanent request_log),
+            // so current AND past requests both show up here, unlike the
+            // live resources table which forgets a request the moment it's
+            // resolved.
+            async function loadOutgoingInbox() {
+                try {
+                    const response = await fetch(
+                        "/api/requests/outgoing?t=" + Date.now(),
+                        { headers: getAuthHeaders(), cache: "no-store" },
+                    );
+                    const requests = await response.json();
+
+                    const pendingCount = requests.filter(
+                        (r) => r.status === "Pending",
+                    ).length;
+                    setBadge("outgoing-inbox-badge", pendingCount);
+
+                    const reqHash = JSON.stringify(requests);
+                    if (reqHash === currentOutgoingHash) return;
+                    currentOutgoingHash = reqHash;
+                    latestOutgoingRequests = requests;
+
+                    if (activeInboxModal === "outgoing") {
+                        document.getElementById("inbox-modal-body").innerHTML =
+                            renderOutgoingList(requests);
+                    }
                 } catch (error) {
-                    console.error("Inbox failed to load.");
+                    console.error("Outgoing inbox failed to load.");
                 }
+            }
+
+            function renderOutgoingList(requests) {
+                if (requests.length === 0) {
+                    return "<p style='color: var(--text-muted);'>You haven't sent any requests yet.</p>";
+                }
+                return requests
+                    .map((req) => {
+                        const resolvedLine = req.resolved_at
+                            ? `<div class="inbox-timestamp">Resolved ${formatTimestamp(req.resolved_at)}${req.resolved_by ? " by " + req.resolved_by : ""}</div>`
+                            : "";
+                        return `
+                        <div class="inbox-entry">
+                            <div class="inbox-entry-row">
+                                <div><strong>${req.action_type}</strong> requested for <em>${req.resource_name}</em></div>
+                                <span class="status-tag ${req.status}">${req.status}</span>
+                            </div>
+                            <div class="inbox-timestamp">Sent ${formatTimestamp(req.requested_at)}</div>
+                            ${resolvedLine}
+                        </div>`;
+                    })
+                    .join("");
+            }
+
+            // --- INBOX MODAL (shared by Incoming + Outgoing) ---
+            function openInboxModal(kind) {
+                activeInboxModal = kind;
+                const title = document.getElementById("inbox-modal-title");
+                const body = document.getElementById("inbox-modal-body");
+
+                if (kind === "incoming") {
+                    title.innerText = "Incoming Inbox";
+                    body.innerHTML = renderIncomingList(latestIncomingRequests);
+                    currentInboxHash = ""; // force a fresh fetch on open
+                    loadAdminInbox();
+                } else {
+                    title.innerText = "Outgoing Inbox";
+                    body.innerHTML = renderOutgoingList(latestOutgoingRequests);
+                    currentOutgoingHash = "";
+                    loadOutgoingInbox();
+                }
+
+                document
+                    .getElementById("inbox-modal-overlay")
+                    .classList.add("open");
+            }
+
+            function closeInboxModal() {
+                activeInboxModal = null;
+                document
+                    .getElementById("inbox-modal-overlay")
+                    .classList.remove("open");
             }
 
             async function resolveAction(requestId, decision) {
@@ -1394,11 +1798,24 @@
                 if (userData.role === "IT-Director") {
                     document.getElementById("admin-panel").style.display =
                         "block";
+                    document.getElementById(
+                        "incoming-inbox-btn",
+                    ).style.display = "inline-block";
+                    document.getElementById(
+                        "outgoing-inbox-btn",
+                    ).style.display = "none";
                     loadAdminInbox();
                     loadAdminUsers();
                 } else {
                     document.getElementById("admin-panel").style.display =
                         "none";
+                    document.getElementById(
+                        "incoming-inbox-btn",
+                    ).style.display = "none";
+                    document.getElementById(
+                        "outgoing-inbox-btn",
+                    ).style.display = "inline-block";
+                    loadOutgoingInbox();
                 }
 
                 runAudit();
@@ -1460,6 +1877,11 @@
                     if (roleEl && roleEl.innerText === "IT-Director") {
                         loadAdminInbox();
                         loadAdminUsers();
+                    } else if (
+                        roleEl &&
+                        roleEl.innerText === "Junior-Developer"
+                    ) {
+                        loadOutgoingInbox();
                     }
                 }
             }, 15000);

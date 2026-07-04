@@ -230,9 +230,18 @@ app.post("/api/action", authenticateUser, async (req, res) => {
 
   try {
     if (req.user.role === "Junior-Developer") {
+      // Create the permanent audit-trail row first so we have an id to
+      // link the live resource row to (see request_log in db.js).
+      const logResult = await pgDb.query(
+        `INSERT INTO request_log (resource_name, requester_uid, requester_name, action_type, status)
+         VALUES ($1, $2, $3, $4, 'Pending') RETURNING id`,
+        [resource_name, req.user.uid, req.user.name, actionType],
+      );
+      const logId = logResult.rows[0].id;
+
       await pgDb.query(
-        "UPDATE resources SET status = 'Pending Approval', pending_action_by = $1, pending_action_type = $2 WHERE resource_name = $3",
-        [req.user.name, actionType, resource_name],
+        "UPDATE resources SET status = 'Pending Approval', pending_action_by = $1, pending_action_type = $2, pending_log_id = $3 WHERE resource_name = $4",
+        [req.user.name, actionType, logId, resource_name],
       );
 
       cachedAuditResults = null;
@@ -283,10 +292,24 @@ app.post("/api/action", authenticateUser, async (req, res) => {
 app.post("/api/action/cancel-request", authenticateUser, async (req, res) => {
   const { resource_name } = req.body;
   try {
-    await pgDb.query(
-      "UPDATE resources SET status = 'Active', pending_action_by = NULL, pending_action_type = NULL WHERE resource_name = $1",
+    const { rows } = await pgDb.query(
+      "SELECT pending_log_id FROM resources WHERE resource_name = $1",
       [resource_name],
     );
+    const logId = rows[0] && rows[0].pending_log_id;
+
+    await pgDb.query(
+      "UPDATE resources SET status = 'Active', pending_action_by = NULL, pending_action_type = NULL, pending_log_id = NULL WHERE resource_name = $1",
+      [resource_name],
+    );
+
+    if (logId) {
+      await pgDb.query(
+        "UPDATE request_log SET status = 'Cancelled', resolved_at = NOW(), resolved_by = $1 WHERE id = $2",
+        [req.user.name, logId],
+      );
+    }
+
     cachedAuditResults = null;
     lastAuditTime = 0;
     broadcastEvent("resource_cancelled", {
@@ -303,14 +326,18 @@ app.get("/api/approvals", authenticateUser, async (req, res) => {
   if (req.user.role !== "IT-Director") return res.json([]);
 
   try {
-    const { rows } = await pgDb.query(
-      "SELECT * FROM resources WHERE status = 'Pending Approval'",
-    );
+    const { rows } = await pgDb.query(`
+      SELECT r.*, rl.requested_at
+      FROM resources r
+      LEFT JOIN request_log rl ON rl.id = r.pending_log_id
+      WHERE r.status = 'Pending Approval'
+    `);
     const pendingRequests = rows.map((row) => ({
       id: row.id,
       requester: row.pending_action_by,
       action: row.pending_action_type || "UNKNOWN",
       resource: row.resource_name,
+      requested_at: row.requested_at,
     }));
     res.json(pendingRequests);
   } catch (err) {
@@ -327,13 +354,14 @@ app.post(
 
     try {
       const { rows } = await pgDb.query(
-        "SELECT pending_action_type, resource_name FROM resources WHERE id = $1",
+        "SELECT pending_action_type, resource_name, pending_log_id FROM resources WHERE id = $1",
         [id],
       );
       if (rows.length === 0) {
         return res.status(404).json({ error: "Request not found." });
       }
       const requestedAction = rows[0].pending_action_type;
+      const logId = rows[0].pending_log_id;
 
       let finalStatus;
       let message;
@@ -349,9 +377,20 @@ app.post(
       }
 
       await pgDb.query(
-        "UPDATE resources SET status = $1, pending_action_by = NULL, pending_action_type = NULL WHERE id = $2",
+        "UPDATE resources SET status = $1, pending_action_by = NULL, pending_action_type = NULL, pending_log_id = NULL WHERE id = $2",
         [finalStatus, id],
       );
+
+      if (logId) {
+        await pgDb.query(
+          "UPDATE request_log SET status = $1, resolved_at = NOW(), resolved_by = $2 WHERE id = $3",
+          [
+            decision === "Approve" ? "Approved" : "Rejected",
+            req.user.name,
+            logId,
+          ],
+        );
+      }
 
       cachedAuditResults = null;
       lastAuditTime = 0;
@@ -371,6 +410,27 @@ app.post(
     }
   },
 );
+
+// Every request (Pending, Approved, Rejected, or Cancelled) the calling
+// user has ever sent, newest first. Backs the Developer's Outgoing Inbox -
+// unlike /api/approvals (live "Pending Approval" resources only, Admin-only),
+// this reads straight from the permanent request_log so past decisions are
+// never lost once a request is resolved.
+app.get("/api/requests/outgoing", authenticateUser, async (req, res) => {
+  try {
+    const { rows } = await pgDb.query(
+      `SELECT id, resource_name, action_type, status, requested_at, resolved_at, resolved_by
+       FROM request_log
+       WHERE requester_uid = $1
+       ORDER BY requested_at DESC
+       LIMIT 100`,
+      [req.user.uid],
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch outgoing requests." });
+  }
+});
 
 // --- ADMIN USER MANAGEMENT ROUTES ---
 app.get("/api/users", authenticateUser, requireAdmin, async (req, res) => {
