@@ -427,7 +427,10 @@
                     );
                 }
             }
-            initializeFirebaseApp();
+            // Keep the promise around - anything that touches firebase.auth()
+            // before this resolves throws "No Firebase App '[DEFAULT]' has
+            // been created", since initializeApp() hasn't run yet.
+            window.firebaseReady = initializeFirebaseApp();
         </script>
     </head>
     <body>
@@ -1260,28 +1263,34 @@
             // Instead: pull a fresh ID token (auto-renewed if the old one
             // expired) and re-mount the dashboard, only tearing things down
             // if that genuinely fails.
-            firebase.auth().onAuthStateChanged(async (user) => {
-                if (skipNextAuthRestore) {
-                    skipNextAuthRestore = false;
-                    return;
-                }
+            // Wait for initializeFirebaseApp() (kicked off in <head>) to
+            // actually finish before touching firebase.auth() - calling it
+            // any earlier throws "No Firebase App '[DEFAULT]' has been
+            // created" because initializeApp() hasn't run yet.
+            window.firebaseReady.then(() => {
+                firebase.auth().onAuthStateChanged(async (user) => {
+                    if (skipNextAuthRestore) {
+                        skipNextAuthRestore = false;
+                        return;
+                    }
 
-                if (!user) {
-                    sessionStorage.removeItem("aegis_token");
-                    return;
-                }
+                    if (!user) {
+                        sessionStorage.removeItem("aegis_token");
+                        return;
+                    }
 
-                try {
-                    const idToken = await user.getIdToken();
-                    sessionStorage.setItem("aegis_token", idToken);
-                    await mountDashboard();
-                } catch (error) {
-                    console.error(
-                        "Failed to restore session on refresh:",
-                        error.message,
-                    );
-                    handleLogout();
-                }
+                    try {
+                        const idToken = await user.getIdToken();
+                        sessionStorage.setItem("aegis_token", idToken);
+                        await mountDashboard();
+                    } catch (error) {
+                        console.error(
+                            "Failed to restore session on refresh:",
+                            error.message,
+                        );
+                        handleLogout();
+                    }
+                });
             });
 
             // Fallback Synchronization Loop.
