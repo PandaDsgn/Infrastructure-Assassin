@@ -43,12 +43,6 @@
                 --pending: #a3cde0;
                 --shadow-rgb: 0, 0, 0;
             }
-
-            /* Inverts images when dark theme is toggled */
-            [data-theme="dark"] .theme-invert-icon {
-                filter: invert(1);
-            }
-
             * {
                 box-sizing: border-box;
             }
@@ -150,10 +144,6 @@
                 font-weight: 500;
                 flex: none;
                 transition: all 0.2s ease;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                gap: 6px;
             }
             .icon-btn:hover {
                 border-color: var(--gold);
@@ -894,13 +884,7 @@
 
         <div id="main-app">
             <button class="agent-open-btn" onclick="toggleChatCollapse()">
-                <img
-                    src="/images/chat.png"
-                    alt="Chat"
-                    class="theme-invert-icon"
-                    style="height: 20px; width: 20px"
-                />
-                Agent
+                💬 Agent
             </button>
 
             <header>
@@ -918,12 +902,7 @@
                             style="display: none"
                             onclick="openInboxModal('incoming')"
                         >
-                            <img
-                                src="/images/incoming.png"
-                                alt="Incoming"
-                                class="theme-invert-icon"
-                                style="height: 18px; width: 18px"
-                            />
+                            📥 Incoming Inbox
                             <span
                                 class="badge-dot"
                                 id="incoming-inbox-badge"
@@ -935,12 +914,7 @@
                             style="display: none"
                             onclick="openInboxModal('outgoing')"
                         >
-                            <img
-                                src="/images/outgoing.png"
-                                alt="Outgoing"
-                                class="theme-invert-icon"
-                                style="height: 18px; width: 18px"
-                            />
+                            📤 Outgoing Inbox
                             <span
                                 class="badge-dot neutral"
                                 id="outgoing-inbox-badge"
@@ -1038,7 +1012,7 @@
                     </div>
                 </div>
                 <div class="chat-help-bar">
-                    💡 Type <strong>/use groq</strong>,
+                    <strong>Tip:</strong> Type <strong>/use groq</strong>,
                     <strong>/use deepseek</strong>, or
                     <strong>/use auto</strong> to manually switch AI tiers.
                 </div>
@@ -1497,6 +1471,15 @@
                         if (data.pending)
                             alert(`🛡️ DISPATCHED: ${data.message}`);
                         else alert(`✅ SUCCESS: ${data.message}`);
+                        currentAuditHash = "";
+                        runAudit();
+                        if (
+                            document.getElementById("display-role")
+                                .textContent === "IT-Director"
+                        ) {
+                            currentInboxHash = "";
+                            loadAdminInbox();
+                        }
                     }
                 } catch (error) {
                     if (!silentPreFlight) alert("Action failed.");
@@ -1660,6 +1643,11 @@
                     });
                     const data = await response.json();
                     alert(data.message);
+
+                    currentInboxHash = "";
+                    currentAuditHash = "";
+                    loadAdminInbox();
+                    runAudit();
                 } catch (error) {
                     alert("Resolution failed.");
                 }
@@ -1807,7 +1795,7 @@
                         "block";
                     document.getElementById(
                         "incoming-inbox-btn",
-                    ).style.display = "flex";
+                    ).style.display = "inline-block";
                     document.getElementById(
                         "outgoing-inbox-btn",
                     ).style.display = "none";
@@ -1821,7 +1809,7 @@
                     ).style.display = "none";
                     document.getElementById(
                         "outgoing-inbox-btn",
-                    ).style.display = "flex";
+                    ).style.display = "inline-block";
                     loadOutgoingInbox();
                 }
 
