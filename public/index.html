@@ -1065,7 +1065,7 @@
 
             function handleRealtimeEvent(payload) {
                 const roleEl = document.getElementById("display-role");
-                const role = roleEl ? roleEl.innerText : null;
+                const role = roleEl ? roleEl.textContent : null;
 
                 switch (payload.type) {
                     case "resource_pending":
@@ -1270,7 +1270,8 @@
                 `;
 
                 // Handle developers clearing their entry from the admin dashboard immediately
-                const role = document.getElementById("display-role").innerText;
+                const role =
+                    document.getElementById("display-role").textContent;
                 if (
                     role === "Junior-Developer" &&
                     targetCategory === "resource"
@@ -1485,7 +1486,7 @@
                         runAudit();
                         if (
                             document.getElementById("display-role")
-                                .innerText === "IT-Director"
+                                .textContent === "IT-Director"
                         ) {
                             currentInboxHash = "";
                             loadAdminInbox();
@@ -1790,7 +1791,7 @@
 
                 document.getElementById("display-name").innerText =
                     userData.name;
-                document.getElementById("display-role").innerText =
+                document.getElementById("display-role").textContent =
                     userData.role;
                 document.getElementById("sso-screen").style.display = "none";
                 document.getElementById("main-app").style.display = "block";
@@ -1874,12 +1875,12 @@
                     runAudit();
 
                     const roleEl = document.getElementById("display-role");
-                    if (roleEl && roleEl.innerText === "IT-Director") {
+                    if (roleEl && roleEl.textContent === "IT-Director") {
                         loadAdminInbox();
                         loadAdminUsers();
                     } else if (
                         roleEl &&
-                        roleEl.innerText === "Junior-Developer"
+                        roleEl.textContent === "Junior-Developer"
                     ) {
                         loadOutgoingInbox();
                     }
